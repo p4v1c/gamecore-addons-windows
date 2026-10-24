@@ -36,7 +36,12 @@ Identity sources per system:
   N64      — internal cartridge name (ROM header), matched to the box's ROMs
              for the display name and cover.
   GBA/DS   — ROM base name, matched to the GameCore covers. Unchanged.
+
+Where (Windows): each emulator's user folder in %APPDATA% or Documents, and,
+when systems.json names its exe, the folder a portable install keeps by it
+(RPCS3 and Xenia have nothing else). resolve_base picks among those that exist.
 """
+import json
 import os
 import re
 import struct
@@ -45,16 +50,17 @@ from pathlib import Path, PurePosixPath
 import memcard
 import ryujinx
 import sfo
+import windows_dirs
 
-# GAMECORE_HOME lets tests (and unusual setups) point the scan somewhere else.
-HOME = Path(os.environ.get("GAMECORE_HOME") or Path.home())
+# GAMECORE_HOME lets tests point every user folder into a sandbox (windows_dirs).
+APPDATA = windows_dirs.appdata()
+LOCALAPPDATA = windows_dirs.local_appdata()
+DOCS = windows_dirs.documents()
 # Two roots, mirroring the core's backend/services/paths.py.
 #   GC       the installation — code shipped by the release, read-only.
 #   GC_DATA  the player's data — ROMs, covers, systems.json.
-# The fallback keeps a box that has not taken the P3 OTA — whose systemd unit
-# passes only GAMECORE_PATH — resolving to the byte-identical location it used
-# before. TEMPORARY: drop it once P12 has moved the data.
-GC = Path(os.environ.get("GAMECORE_PATH", "/opt/GameCore"))
+# The CLI always passes both; the fallback is the core's own default.
+GC = Path(os.environ.get("GAMECORE_PATH", r"C:\Program Files\GameCore"))
 GC_DATA = Path(os.environ.get("GAMECORE_DATA") or GC)
 COVERS = GC_DATA / "emu" / "covers"
 ROMS = GC_DATA / "emu"
@@ -90,55 +96,48 @@ CATALOG = {
         C("", "files", "save", [".sav", ".nvm"] + [f".sav.{n}" for n in PLAYER_SLOTS], "rom"),
         C("", "files", "state", [".mln"] + [f".ml{i}" for i in range(1, 9)], "rom"),
     ]},
-    "gopher64": {"label": "Nintendo 64", "bases": [
-        HOME / ".var/app/io.github.gopher64.gopher64/data/gopher64", HOME / ".local/share/gopher64"], "collections": [
+    "gopher64": {"label": "Nintendo 64", "bases": [APPDATA / "gopher64"], "collections": [
         C("saves", "files", "save", [".eep", ".mpk", ".sra", ".fla", ".srm"], "n64"),
         C("states", "files", "state", (), "n64"),
     ]},
-    "ppsspp": {"label": "PSP", "bases": [
-        HOME / ".var/app/org.ppsspp.PPSSPP/config/ppsspp/PSP", HOME / ".config/ppsspp/PSP"], "collections": [
+    "ppsspp": {"label": "PSP", "bases": [DOCS / "PPSSPP" / "PSP"], "collections": [
         C("SAVEDATA", "dirs", "save", (), "psp_save"),
         C("PPSSPP_STATE", "files", "state", (), "psp_state"),
     ]},
     "duckstation": {"label": "PlayStation 1", "bases": [
-        HOME / ".local/share/duckstation", HOME / ".var/app/org.duckstation.DuckStation/data/duckstation"], "collections": [
+        DOCS / "DuckStation", LOCALAPPDATA / "DuckStation"], "collections": [
         C("memcards", "cards", "save", [".mcd", ".mcr", ".ps"], "card_or_serial"),
         C("savestates", "files", "state", (), "ps_serial"),
     ]},
-    "pcsx2": {"label": "PlayStation 2", "bases": [
-        HOME / ".config/PCSX2", HOME / ".var/app/net.pcsx2.PCSX2/config/PCSX2"], "collections": [
+    "pcsx2": {"label": "PlayStation 2", "bases": [DOCS / "PCSX2"], "collections": [
         C("memcards", "cards", "save", [".ps2", ".mcd", ".mcr"], "card_or_serial"),
         C("sstates", "files", "state", (), "ps_serial"),
     ]},
+    # Dolphin moved its user folder from Documents to %APPDATA% in 2024.
     "dolphin": {"label": "GameCube / Wii", "bases": [
-        HOME / ".var/app/org.DolphinEmu.dolphin-emu/data/dolphin-emu", HOME / ".local/share/dolphin-emu"], "collections": [
+        APPDATA / "Dolphin Emulator", DOCS / "Dolphin Emulator"], "collections": [
         C("Wii/title", "dirs", "save", (), "wii", glob="*/*/data"),
         C("GC", "cards", "save", [".raw", ".gci", ".sav"], "gc_card"),
         C("StateSaves", "files", "state", (), "dolphin_state"),
     ]},
-    "rpcs3": {"label": "PlayStation 3", "bases": [
-        HOME / ".config/rpcs3", HOME / ".var/app/net.rpcs3.RPCS3/config/rpcs3"], "collections": [
+    # Portable only: its folder comes from systems.json (PORTABLE below).
+    "rpcs3": {"label": "PlayStation 3", "bases": [], "collections": [
         C("dev_hdd0/home/00000001/savedata", "dirs", "save", (), "rpcs3_save"),
         C("dev_hdd0/home/00000001/trophy", "dirs", "save", (), "rpcs3_trophy"),
         C("savestates", "any", "state", (), "rpcs3_state"),
     ]},
-    "azahar": {"label": "Nintendo 3DS", "bases": [
-        HOME / ".var/app/org.azahar_emu.Azahar/data/azahar-emu",
-        HOME / ".local/share/azahar-emu", HOME / ".local/share/citra-emu"], "collections": [
+    "azahar": {"label": "Nintendo 3DS", "bases": [APPDATA / "Azahar", APPDATA / "Citra"], "collections": [
         C("sdmc/Nintendo 3DS", "dirs", "save", (), "n3ds", glob="*/*/title/*/*"),
         # extdata carries real progress for some games (Animal Crossing NL…);
         # extdata ids don't map cleanly to title ids, so it stays "shared"
         C("sdmc/Nintendo 3DS", "dirs", "save", (), "shared", glob="*/*/extdata/*/*"),
         C("states", "files", "state", (), "n3ds_state"),
     ]},
-    "cemu": {"label": "Wii U", "bases": [
-        HOME / ".var/app/info.cemu.Cemu/data/Cemu", HOME / ".local/share/Cemu"], "collections": [
+    "cemu": {"label": "Wii U", "bases": [APPDATA / "Cemu"], "collections": [
         C("mlc01/usr/save", "dirs", "save", (), "wiiu", glob="*/*"),
     ]},
     # Ryujinx, the core's `switch` pack (its `ryujinx` pack shares it).
-    "switch": {"label": "Nintendo Switch", "bases": [
-        HOME / ".var/app/io.github.ryubing.Ryujinx/config/Ryujinx",
-        HOME / ".config/Ryujinx"], "collections": [
+    "switch": {"label": "Nintendo Switch", "bases": [APPDATA / "Ryujinx"], "collections": [
         # Ryujinx layout: install-specific save ids, identified via ExtraData /
         # the imkvdb.arc indexer (see ryujinx.py)
         C("bis/user/save", "dirs", "save", (), "ryujinx_save"),
@@ -151,63 +150,81 @@ CATALOG = {
     # Eden ran the Switch before Ryujinx came back. Its saves stay readable
     # (download, look) and are never written: the core copies them into
     # Ryujinx, and a write here would fork the two.
-    "eden": {"label": "Eden (before Ryujinx)", "readonly": True, "bases": [
-        HOME / ".var/app/dev.eden_emu.eden/data/eden",
-        HOME / ".local/share/eden"], "collections": [
+    "eden": {"label": "Eden (before Ryujinx)", "readonly": True, "bases": [APPDATA / "eden"], "collections": [
         C("nand/user/save", "dirs", "save", (), "switch", glob="0000000000000000/*/*"),
         C("nand/user/save/cache", "dirs", "save", (), "shared"),
     ]},
-    # Left on GC, not GC_DATA, and this one is a genuine exception. Xenia Canary
-    # is portable: it keeps its saves in content/ *next to its own exe*, and the
-    # exe lives under lib/ in the code root. So a data directory physically sits
-    # inside the code root. Pointing this at GC_DATA would make the addon look
-    # for saves where nothing ever writes them: every Xbox 360 save would vanish
-    # from the UI, and "no saves found" reads exactly like "no saves".
-    #
-    # The core has now measured the boundary this used to have to guess at
-    # (GamecoreRenew#36). Two corrections to what this comment used to claim,
-    # because both changed why the exception is right rather than whether:
-    #
-    #   · `lib/` does NOT ship with the release. It is in neither release
-    #     archive and `/lib/` is gitignored at the repo root — the provider
-    #     downloads into it on the box (`providers.py`, `ctx.gamecore_path /
-    #     spec["dest"]`). So no OTA ever refreshes or repairs what is in here.
-    #   · the core's launcher reaches the exe through the backend's working
-    #     directory (`WorkingDirectory=$GAMECORE_PATH`), not through any
-    #     resolver. That is now pinned by a `@GAMECORE_PATH@` token in the pack
-    #     instead of being left to the cwd.
-    #
-    # Both point the same way: `lib/` is code, it stays on GC, and this base is
-    # right. What is NOT settled is where xenia's content/ ends up — if the core
-    # takes option 2 in #36 and relocates it to the data root, this entry moves
-    # with it. Until then, saves live in the code root and _backup() writes its
-    # copies there too, which is the documented cost of the exception.
-    "xenia": {"label": "Xbox 360", "bases": [GC / "lib/xenia"], "collections": [
-        # Canary is portable on Windows builds (also under Wine): saves live in
-        # content/<profile XUID>/<TitleID>/ next to the exe. That per-title dir
+    # Xenia Canary is portable: content\\ sits next to its exe (PORTABLE below);
+    # Documents\\Xenia is where a non-portable build keeps it.
+    "xenia": {"label": "Xbox 360", "bases": [DOCS / "Xenia"], "collections": [
+        # Saves live in content/<profile XUID>/<TitleID>/. That per-title dir
         # holds 00000001/ (the save packages) AND Headers/ (their metadata) —
         # both are needed for a transfer, so the title dir is the save unit.
         C("content", "dirs", "save", (), "x360", glob="*/*"),
     ]},
-    "shadps4": {"label": "PlayStation 4", "bases": [
-        HOME / ".var/app/net.shadps4.shadPS4/data/shadPS4",
-        HOME / ".local/share/shadPS4"], "collections": [
+    "shadps4": {"label": "PlayStation 4", "bases": [APPDATA / "shadPS4"], "collections": [
         C("home/1/savedata", "dirs", "save", (), "ps4_save", glob="*/*"),   # ≥ v0.16
         C("savedata/1", "dirs", "save", (), "ps4_save", glob="*/*"),        # ≤ v0.15
     ]},
 }
 
 
+# A portable install, found from the exe a systems.json entry declares:
+# emulator -> (system ids that may declare it, marker file or None, folder under the exe's).
+# A missing folder is skipped, so a marker-less folder only counts when it exists.
+PORTABLE = {
+    "rpcs3": (("rpcs3",), None, ""),
+    "xenia": (("xenia", "xbox360"), None, ""),
+    "dolphin": (("gamecube", "wii", "dolphin"), "portable.txt", "User"),
+    "ppsspp": (("ppsspp", "psp"), None, "memstick/PSP"),
+    "duckstation": (("duckstation", "psx"), "portable.txt", ""),
+    "pcsx2": (("pcsx2", "ps2"), "portable.ini", ""),
+    "azahar": (("azahar", "3ds"), None, "user"),
+    "cemu": (("cemu", "wiiu"), None, "portable"),
+    "switch": (("switch", "ryujinx"), None, "portable"),
+    "shadps4": (("shadps4", "ps4"), None, "user"),
+    "gopher64": (("gopher64", "n64"), "portable.txt", "portable_data/data"),
+}
+
+
+def _systems() -> list:
+    path = GC_DATA / "config" / "systems.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return []
+    return [s for s in data if isinstance(s, dict)] if isinstance(data, list) else []
+
+
+def portable_bases(emu_id: str) -> list:
+    """The folders a portable install of this emulator keeps by its exe."""
+    if emu_id not in PORTABLE:
+        return []
+    ids, marker, sub = PORTABLE[emu_id]
+    out = []
+    for system in _systems():
+        exe = windows_dirs.exe_dir(system) if system.get("id") in ids else None
+        if exe and (marker is None or (exe / marker).exists()):
+            base = exe / sub if sub else exe
+            if base not in out:
+                out.append(base)
+    return out
+
+
+def bases(emu_id: str) -> list:
+    """Every candidate data folder: the portable ones systems.json leads to first."""
+    return portable_bases(emu_id) + CATALOG[emu_id]["bases"]
+
+
 def _load_local_bases() -> None:
     """Merge machine-specific save locations from an optional, gitignored
     local_bases.json next to this module — extra data dirs a particular box
     keeps that don't belong in the shared repo (e.g. a legacy Switch emulator).
-    Format: {"<emu id>": ["/absolute/path", ...]}. Paths are prepended so
+    Format: {"<emu id>": ["D:\\absolute\\path", ...]}. Paths are prepended so
     resolve_base still weighs them by save count, not order."""
-    import json
     p = Path(__file__).parent / "local_bases.json"
     try:
-        extra = json.loads(p.read_text())
+        extra = json.loads(p.read_text(encoding="utf-8-sig"))
     except (OSError, ValueError):
         return
     for emu_id, paths in extra.items():
@@ -236,36 +253,19 @@ def _base_savecount(emu_id: str, base: Path) -> int:
 _base_choice: dict = {}
 
 
-def _declared_flatpak(emu_id: str):
-    """True/False when the box's systems.json declares this emulator flatpak/
-    native, None when it doesn't say (absent, unreadable, or no such id)."""
-    import json
-    try:
-        systems = json.loads((GC_DATA / "config" / "systems.json").read_text())
-        path = next((s.get("path", "") for s in systems if s.get("id") == emu_id), "")
-    except (OSError, ValueError):
-        return None
-    return path == "flatpak" if path else None
-
-
 def resolve_base(emu_id: str) -> Path | None:
     """The emulator's data dir. When several candidate bases exist (e.g. a
     Switch box with both Ryujinx and a yuzu-family emulator installed), pick the
     one that actually holds the most saves rather than blindly the first — so a
     freshly installed, empty emulator never hides an established save library.
-    Ties go to the install systems.json declares (flatpak vs native): after a
-    native→flatpak migration both trees hold identical copies, and the frozen
-    native backup must not shadow the tree the emulator actually writes to.
+    Ties go to the first candidate: the portable install systems.json declares,
+    which is the one the emulator writes to.
     The save-count globs are memoized on the candidate dirs' mtimes: scan()
     runs on every request and re-globbing each time would be wasteful."""
-    existing = [b for b in CATALOG[emu_id]["bases"] if b.exists()]
+    existing = [b for b in bases(emu_id) if b.exists()]
     if len(existing) <= 1:
         return existing[0] if existing else None
-    declared = _declared_flatpak(emu_id)
-    if declared is not None:
-        # stable: declared variant first, so max() picks it on equal counts
-        existing.sort(key=lambda b: (".var/app" in str(b)) != declared)
-    sig = (declared,) + tuple((str(b), b.stat().st_mtime_ns) for b in existing)
+    sig = tuple((str(b), b.stat().st_mtime_ns) for b in existing)
     hit = _base_choice.get(emu_id)
     if hit is None or hit[0] != sig:
         hit = (sig, max(existing, key=lambda b: _base_savecount(emu_id, b)))

@@ -11,6 +11,7 @@ the `profileSaves` blocks copied from GamecoreRenew's catalog/*/pack.json.
 With GAMECORE_SRC pointing at a GamecoreRenew checkout, the live packs are
 checked too, so a pack that changes its layout fails here.
 """
+import _winapi
 import hashlib
 import io
 import json
@@ -41,7 +42,7 @@ import profiles               # noqa: E402
 import server                 # noqa: E402
 
 client = TestClient(server.app)
-HOME, GCD = ROOT / "home", ROOT / "userdata"
+HOME, GCD, EMU = ROOT / "home", ROOT / "userdata", ROOT / "Emulators"
 OWNER = {"id": "aaaa0000aaaa0000", "name": "Jimmy", "color": "#b8501b", "avatar": "cat", "primary": True}
 SAM = {"id": "bbbb1111bbbb1111", "name": "Sam", "color": "#127a6d", "avatar": None, "primary": False}
 PEOPLE = [OWNER, SAM]
@@ -67,14 +68,14 @@ def sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-RPCS3 = HOME / ".config/rpcs3"
-EDEN = HOME / ".var/app/dev.eden_emu.eden/data/eden"
-RYU = HOME / ".var/app/io.github.ryubing.Ryujinx/config/Ryujinx"
+RPCS3 = EMU / "RPCS3"
+EDEN = HOME / "AppData/Roaming/eden"
+RYU = HOME / "AppData/Roaming/Ryujinx"
 # Eden left the core: its profile folders stay as the Eden-era pack laid them.
 EDEN_ERA = {"eden"}
-CEMU = HOME / ".var/app/info.cemu.Cemu/data/Cemu"
-PCSX2 = HOME / ".config/PCSX2"
-DUCK = HOME / ".local/share/duckstation"
+CEMU = HOME / "AppData/Roaming/Cemu"
+PCSX2 = HOME / "Documents/PCSX2"
+DUCK = HOME / "Documents/DuckStation"
 MK8 = "0100152000022000"
 USER = "0" * 31 + "1"
 BOTW = "01007EF00011E000"
@@ -90,6 +91,9 @@ def ryujinx_save(folder: Path, title: str, data: bytes) -> None:
 
 
 def build_tree():
+    # RPCS3 is portable: systems.json names its exe, its saves sit beside it.
+    write(GCD / "config/systems.json", json.dumps(
+        [{"id": "rpcs3", "path": str(RPCS3 / "rpcs3.exe")}]).encode())
     # Owner: saves where the emulators always kept them.
     write(GCD / "emu/gba/Golden Sun.gba", b"ROM")
     write(GCD / "emu/gba/Golden Sun.sav", b"owner-gs" * 64)
@@ -105,10 +109,10 @@ def build_tree():
     two_games = mc.import_save(two_games, cards.make_psu(name="BESLES-99999OTHER", title="OTHER")[0], "b.psu")
     write(PCSX2 / "memcards/Mcd001.ps2", two_games)
     write(DUCK / "memcards/SLES-12345.mcd", mc.import_save(cards.blank_ps1(), cards.make_mcs(), "t.mcs"))
-    write(HOME / ".local/share/dolphin-emu/StateSaves/GALE01.s01", b"state" * 64)
+    write(HOME / "AppData/Roaming/Dolphin Emulator/StateSaves/GALE01.s01", b"state" * 64)
     # Emulators the owner has run but holds no save in: their folders exist.
-    for d in (".local/share/gopher64", ".config/ppsspp/PSP", ".local/share/azahar-emu",
-              ".local/share/shadPS4"):
+    for d in ("AppData/Roaming/gopher64", "Documents/PPSSPP/PSP", "AppData/Roaming/Azahar",
+              "AppData/Roaming/shadPS4"):
         (HOME / d).mkdir(parents=True)
 
     # Sam: the same systems, in Sam's folder, laid out as the packs declare.
@@ -246,7 +250,8 @@ def swap(folder: Path, target: Path):
     """What the core does while Sam plays: park the owner's folder, link Sam's."""
     folder.rename(folder.with_name(folder.name + profiles.PRIMARY_SUFFIX))
     target.mkdir(parents=True, exist_ok=True)
-    os.symlink(target, folder, target_is_directory=True)
+    # A junction, as the core makes it: a symlink needs admin on Windows.
+    _winapi.CreateJunction(str(target), str(folder))
 
 
 def unswap(folder: Path):

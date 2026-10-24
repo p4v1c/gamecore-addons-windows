@@ -2,8 +2,8 @@
   "api": 1,
   "name": "save-manager",
   "label": "Saves",
-  "description": "Browse, back up, restore & delete every emulator's saves — per game, incl. inside memory cards — and transfer saves from a PC",
-  "version": "2.4.0",
+  "description": "Browse, back up, restore & delete every emulator's saves \u2014 per game, incl. inside memory cards \u2014 and transfer saves from a PC",
+  "version": "3.0.0",
   "type": "web",
   "default": false,
   "service": "user",
@@ -12,5 +12,8 @@
     "wheels"
   ],
   "path": "/saves",
-  "shared": ["py/sfo.py"]
+  "shared": [
+    "py/sfo.py",
+    "py/windows_dirs.py"
+  ]
 }

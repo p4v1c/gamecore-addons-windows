@@ -12,10 +12,11 @@ and a path joined onto the wrong root is invisible. Here the ROM/save tree is
 built under DATA only: any code still reaching for GAMECORE_PATH finds an empty
 directory and the check fails. See tests/test_paths.py for the direct assertion.
 
-The one deliberate exception is lib/xenia, built under the CODE root — see the
-comment on the xenia entry in catalog.py.
+RPCS3 and Xenia are portable on Windows: their trees sit by the exe that
+systems.json declares (ROOT/Emulators), outside both roots.
 """
 import io
+import json
 import os
 import struct
 import sys
@@ -46,6 +47,7 @@ client = TestClient(server.app)
 HOME = ROOT / "home"
 GC = ROOT / "GameCore"      # the installation — code, read-only in production
 GCD = ROOT / "userdata"     # the player's data — ROMs, covers, systems.json
+EMU = ROOT / "Emulators"    # portable emulators, where systems.json says they are
 FAILURES = []
 
 
@@ -70,7 +72,17 @@ def make_sfo(pairs: dict) -> bytes:
     return out + keys + b"\x00" * pad + data
 
 
+def write_systems():
+    """systems.json naming the portable emulators: RPCS3 and Xenia keep everything by their exe."""
+    (GCD / "config").mkdir(parents=True, exist_ok=True)
+    (GCD / "config/systems.json").write_text(json.dumps([
+        {"id": "rpcs3", "path": str(EMU / "RPCS3" / "rpcs3.exe")},
+        {"id": "xenia", "path": str(EMU / "Xenia" / "xenia_canary.exe")},
+    ]), encoding="utf-8")
+
+
 def build_tree():
+    write_systems()
     # mgba — flat .sav/.ss0 next to the ROMs
     d = GCD / "emu/mgba"
     d.mkdir(parents=True)
@@ -90,7 +102,7 @@ def build_tree():
     (GCD / "emu/wii/Mario Kart Wii.rvz").write_bytes(b"RVZ\x01" + bytes(0x54) + b"RMCP01")
 
     # DuckStation — PerGameTitle card (no serial in the file name) + a state
-    ds = HOME / ".local/share/duckstation"
+    ds = HOME / "Documents/DuckStation"
     card = mc.import_save(cards.blank_ps1(), cards.make_mcs(), "t.mcs")
     (ds / "memcards").mkdir(parents=True)
     (ds / "memcards/Test Game (Europe).mcd").write_bytes(card)
@@ -98,7 +110,7 @@ def build_tree():
     (ds / "savestates/SLES-12345_1.sav").write_bytes(b"state!" * 10)
 
     # PCSX2 — one shared card holding TWO games
-    p2 = HOME / ".config/PCSX2"
+    p2 = HOME / "Documents/PCSX2"
     c2 = mc.import_save(cards.blank_ps2(), cards.make_psu()[0], "a.psu")
     c2 = mc.import_save(c2, cards.make_psu(name="BESLES-99999OTHER", title="OTHER GAME")[0], "b.psu")
     (p2 / "memcards").mkdir(parents=True)
@@ -106,13 +118,13 @@ def build_tree():
     (p2 / "sstates").mkdir()
 
     # Dolphin — GCI-folder mode: one standalone .gci
-    dol = HOME / ".local/share/dolphin-emu"
+    dol = HOME / "AppData/Roaming/Dolphin Emulator"
     (dol / "GC/EUR/Card A").mkdir(parents=True)
     (dol / "GC/EUR/Card A/01-GALE-smash.gci").write_bytes(cards.make_gci())
     (dol / "StateSaves").mkdir()
 
     # RPCS3 — savedata with PARAM.SFO + a trophy set with the same title
-    r3 = HOME / ".config/rpcs3/dev_hdd0/home/00000001"
+    r3 = EMU / "RPCS3/dev_hdd0/home/00000001"
     sd = r3 / "savedata/BLES01234-SAVE01"
     sd.mkdir(parents=True)
     (sd / "PARAM.SFO").write_bytes(make_sfo({"TITLE": "Demon Quest"}))
@@ -123,14 +135,14 @@ def build_tree():
     (tr / "TROPUSR.DAT").write_bytes(b"t" * 128)
 
     # Eden — yuzu layout: MK8 has an account save AND a device save
-    eden = HOME / ".var/app/dev.eden_emu.eden/data/eden/nand/user/save/0000000000000000"
+    eden = HOME / "AppData/Roaming/eden/nand/user/save/0000000000000000"
     for user, name in (("0" * 31 + "1", "account.sav"), ("0" * 32, "device.sav")):
         d = eden / user / "0100152000022000"
         d.mkdir(parents=True)
         (d / name).write_bytes(name.encode() * 10)
 
     # Ryujinx — one save with ExtraData, one identified via imkvdb.arc only
-    ry = HOME / ".var/app/io.github.ryubing.Ryujinx/config/Ryujinx"
+    ry = HOME / "AppData/Roaming/Ryujinx"
     MK8 = 0x0100152000022000                      # Mario Kart 8 (known title)
     s1 = ry / "bis/user/save/0000000000000001"
     (s1 / "0").mkdir(parents=True)
@@ -155,7 +167,7 @@ def build_tree():
     (idx / "imkvdb.arc").write_bytes(arc)
 
     # Xenia — portable content dir with one save + its header + the profile
-    xe = GC / "lib/xenia/content/E030000012345678"
+    xe = EMU / "Xenia/content/E030000012345678"
     sv = xe / "415608F3/00000001/SaveGame00"
     sv.mkdir(parents=True)
     (sv / "savegame.dat").write_bytes(b"x360" * 64)
@@ -168,7 +180,7 @@ def build_tree():
     (prof / "E030000012345678").write_bytes(b"profile" * 10)
 
     # shadPS4 — v0.16 layout, title from the save's own param.sfo
-    p4 = HOME / ".var/app/net.shadps4.shadPS4/data/shadPS4/home/1/savedata/CUSA01234/SPRJ0005"
+    p4 = HOME / "AppData/Roaming/shadPS4/home/1/savedata/CUSA01234/SPRJ0005"
     (p4 / "sce_sys").mkdir(parents=True)
     (p4 / "sce_sys/param.sfo").write_bytes(make_sfo(
         {"MAINTITLE": "PS4 Test Game", "TITLE_ID": "CUSA01234"}))
@@ -223,7 +235,7 @@ def test_duckstation_card():
 
     # export just the in-card save
     e = incard_rows[0]
-    r = client.get(f"/api/saves/duckstation/download", params={"id": e["id"], "save": e["save_key"]})
+    r = client.get("/api/saves/duckstation/download", params={"id": e["id"], "save": e["save_key"]})
     check("in-card export", r.status_code == 200 and r.content[:1] == b"\x51")
 
     # delete just the in-card save (card stays, becomes empty → shared bucket)
@@ -232,7 +244,7 @@ def test_duckstation_card():
     g2 = games("duckstation")
     check("save gone from the card",
           not any(x.get("in_card") for game in g2["games"] for x in game["entries"]))
-    baks = list((HOME / ".local/share/duckstation/memcards").glob("*.bak-*"))
+    baks = list((HOME / "Documents/DuckStation/memcards").glob("*.bak-*"))
     check("card backed up before write", len(baks) == 1)
     # put it back for the later tests
     r = client.post("/api/saves/duckstation/upload",
@@ -334,7 +346,7 @@ def test_ryujinx():
           zf.namelist() == ["switch-title/0100152000022000/1/game.sav"], str(zf.namelist()))
 
     # wreck the save, then restore the normalized zip → lands in 0/ AND 1/
-    base = HOME / ".var/app/io.github.ryubing.Ryujinx/config/Ryujinx"
+    base = HOME / "AppData/Roaming/Ryujinx"
     sdir = base / "bis/user/save/0000000000000001"
     (sdir / "0/game.sav").write_bytes(b"corrupted")
     r2 = client.post("/api/saves/switch/upload-full",
@@ -368,7 +380,7 @@ def test_eden():
           names == ["switch-title/0100152000022000/1/account.sav",
                     "switch-title/0100152000022000/3/device.sav"], str(names))
 
-    eden = HOME / ".var/app/dev.eden_emu.eden/data/eden/nand/user/save/0000000000000000"
+    eden = HOME / "AppData/Roaming/eden/nand/user/save/0000000000000000"
     before = (eden / ("0" * 32) / "0100152000022000/device.sav").read_bytes()
     entry = g["games"][0]["entries"][0]["id"]
     for refused in (client.post("/api/saves/eden/upload-full", files={"file": ("mk8.zip", io.BytesIO(r.content))}),
@@ -418,7 +430,7 @@ def test_xenia():
                     "x360-title/415608F3/Headers/00000001/SaveGame00.header"], str(names))
 
     # restore is remapped onto the box's own profile (XUID)
-    tid_dir = GC / "lib/xenia/content/E030000012345678/415608F3"
+    tid_dir = EMU / "Xenia/content/E030000012345678/415608F3"
     (tid_dir / "00000001/SaveGame00/savegame.dat").write_bytes(b"old")
     r2 = client.post("/api/saves/xenia/upload-full",
                      files={"file": ("x360.zip", io.BytesIO(r.content))})
@@ -447,7 +459,7 @@ def test_shadps4():
         z.writestr("ps4-title/CUSA99999/SAVE00/data.bin", b"new game")
     buf.seek(0)
     r2 = client.post("/api/saves/shadps4/upload-full", files={"file": ("n.zip", buf)})
-    dest = HOME / ".var/app/net.shadps4.shadPS4/data/shadPS4/home/1/savedata/CUSA99999/SAVE00/data.bin"
+    dest = HOME / "AppData/Roaming/shadPS4/home/1/savedata/CUSA99999/SAVE00/data.bin"
     check("new game restored", r2.status_code == 200 and dest.read_bytes() == b"new game", r2.text)
 
 
@@ -510,13 +522,13 @@ def test_backups_section():
         z.writestr("dev_hdd0/home/00000001/savedata/BLES01234-SAVE01/SAVE.DAT", b"y" * 64)
     buf.seek(0)
     r = client.post("/api/saves/rpcs3/upload-full", files={"file": ("s.zip", buf)})
-    sd = HOME / ".config/rpcs3/dev_hdd0/home/00000001"
+    sd = EMU / "RPCS3/dev_hdd0/home/00000001"
     check("granular full-restore ok", r.status_code == 200 and
           (sd / "savedata/BLES01234-SAVE01/SAVE.DAT").read_bytes() == b"y" * 64, r.text)
     check("backup at save level, not dev_hdd0",
           any(p.name.startswith("BLES01234-SAVE01.bak-") for p in (sd / "savedata").iterdir())
           and not any(p.name.startswith("dev_hdd0.bak-")
-                      for p in (HOME / ".config/rpcs3").iterdir()))
+                      for p in (EMU / "RPCS3").iterdir()))
 
 
 def test_entry_id_dot_is_rejected():
@@ -589,9 +601,11 @@ def test_two_roots():
     # rejoins onto GAMECORE_PATH loses the saves outright rather than mildly.
     check("no mgba tree under PATH at all", not (GC / "emu/mgba").exists())
 
-    # …and the deliberate exception, guarded so nobody "finishes" the migration.
+    # Portable emulators: the folder of the exe systems.json declares.
     xen = catalog.resolve_base("xenia")
-    check("xenia base stays under PATH", xen == GC / "lib/xenia", str(xen))
+    check("xenia base is its exe's folder", xen == EMU / "Xenia", str(xen))
+    check("rpcs3 base is its exe's folder", catalog.resolve_base("rpcs3") == EMU / "RPCS3",
+          str(catalog.resolve_base("rpcs3")))
 
 
 if __name__ == "__main__":

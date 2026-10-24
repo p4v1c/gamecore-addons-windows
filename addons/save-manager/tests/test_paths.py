@@ -54,24 +54,38 @@ check("gba base under DATA", catalog.CATALOG["gba"]["bases"][0] == DATA / "emu/g
       str(catalog.CATALOG["gba"]["bases"][0]))
 check("melonds base under DATA", catalog.CATALOG["melonds"]["bases"][0] == DATA / "emu/melonds",
       str(catalog.CATALOG["melonds"]["bases"][0]))
-# The exception, guarded: xenia keeps its saves next to its own exe, which
-# ships under lib/. See the comment on the xenia entry in catalog.py.
-check("xenia base stays under PATH", catalog.CATALOG["xenia"]["bases"][0] == CODE / "lib/xenia",
-      str(catalog.CATALOG["xenia"]["bases"][0]))
+check("nothing scanned under PATH", all(CODE not in b.parents for e in catalog.CATALOG
+                                        for b in catalog.bases(e)))
 
-print("Fallback for a box that has not taken the P3 OTA")
-# Its systemd unit passes GAMECORE_PATH only. Every path must resolve exactly
-# where it did before — the split must cost nothing until P12 moves the bytes.
+print("Portable installs, found from the exe systems.json declares")
+import json  # noqa: E402
+EMU = ROOT / "Emulators"
+(EMU / "Dolphin").mkdir(parents=True)
+(DATA / "config").mkdir()
+(DATA / "config" / "systems.json").write_text(json.dumps([
+    {"id": "gamecube", "path": str(EMU / "Dolphin" / "Dolphin.exe")},
+    {"id": "rpcs3", "path": str(EMU / "RPCS3" / "rpcs3.exe")},
+    {"id": "pcsx2", "path": "emu\pcsx2\pcsx2-qt.exe"},
+]), encoding="utf-8")
+check("no portable.txt: Dolphin's user folder only",
+      catalog.portable_bases("dolphin") == [], str(catalog.portable_bases("dolphin")))
+(EMU / "Dolphin" / "portable.txt").write_text("")
+check("portable.txt: User next to Dolphin.exe first",
+      catalog.bases("dolphin")[0] == EMU / "Dolphin" / "User", str(catalog.bases("dolphin")))
+check("rpcs3 has its exe's folder only", catalog.bases("rpcs3") == [EMU / "RPCS3"],
+      str(catalog.bases("rpcs3")))
+check("a relative exe path is not a portable install", catalog.portable_bases("pcsx2") == [])
+check("Documents moved by the sandbox", catalog.CATALOG["pcsx2"]["bases"] == [HOME / "Documents" / "PCSX2"],
+      str(catalog.CATALOG["pcsx2"]["bases"]))
+
+print("Fallback when only GAMECORE_PATH is set (a checkout)")
 del os.environ["GAMECORE_DATA"]
 importlib.reload(catalog)
 check("DATA falls back to PATH", catalog.GC_DATA == CODE, str(catalog.GC_DATA))
 check("covers back under PATH", catalog.COVERS == CODE / "emu" / "covers", str(catalog.COVERS))
 check("roms back under PATH", catalog.ROMS == CODE / "emu", str(catalog.ROMS))
-check("xenia unaffected by the fallback",
-      catalog.CATALOG["xenia"]["bases"][0] == CODE / "lib/xenia",
-      str(catalog.CATALOG["xenia"]["bases"][0]))
 
-# An empty GAMECORE_DATA must not resolve every path to "/" — `or` not `get`.
+# An empty GAMECORE_DATA must not resolve every path to the cwd: `or`, not `get`.
 os.environ["GAMECORE_DATA"] = ""
 importlib.reload(catalog)
 check("empty GAMECORE_DATA falls back too", catalog.GC_DATA == CODE, str(catalog.GC_DATA))

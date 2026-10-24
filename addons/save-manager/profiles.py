@@ -8,7 +8,8 @@ emulator by the `profileSaves` block of its pack.json in the core:
 - `keys`: a config option points the emulator at the profile's folder for
   the length of a game. The owner's files never move.
 - `dirs`: the emulator has no option, so while a profile plays, its save
-  folder is a symlink into that profile's folder and the owner's folder waits
+  folder is a directory junction into that profile's folder (a symlink needs
+  admin on Windows; the core makes junctions) and the owner's folder waits
   beside it as `<name>.gamecore-primary`. After a crash the swap stays until
   the next launch.
 
@@ -114,8 +115,13 @@ def in_root(path: Path) -> PurePosixPath | None:
         return None
 
 
+def is_link(path: Path) -> bool:
+    """A junction or a symlink: `is_symlink()` alone is False for the core's junctions."""
+    return path.is_symlink() or path.is_junction()
+
+
 def is_profile_link(path: Path) -> bool:
-    return path.is_symlink() and in_root(path) is not None
+    return is_link(path) and in_root(path) is not None
 
 
 def _ini_value(file: Path, section: str | None, key: str) -> str | None:
@@ -158,7 +164,7 @@ def holder(emu_id: str, base: Path | None) -> str | None:
     if lay is None or base is None:
         return None
     for rel in lay["dirs"]:
-        inside = in_root(base / rel) if (base / rel).is_symlink() else None
+        inside = in_root(base / rel) if is_link(base / rel) else None
         if inside is not None:
             return inside.parts[0] if inside.parts else "?"
     return _option_holder(lay["system"]) if lay["keys"] else None
