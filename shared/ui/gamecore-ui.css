@@ -1,6 +1,6 @@
 /* GameCore addons — shared look. Tokens and components; each page adds only its own layout.
    Decisions and contrast ratios: shared/ui/DESIGN.md. Copied into every addon's web/ by its
-   install.sh, so an addon stays self-contained. */
+   install.ps1, so an addon stays self-contained. */
 
 @font-face {
   font-family: "Source Sans 3";

@@ -5,7 +5,7 @@ The addon pages are part of GameCore, so they borrow its identity
 games carry the colour. Covers, icons and system logos are the only loud
 things on a page; the chrome stays grey and gets out of the way.
 
-Files here are copied into each addon's `web/` by its `install.sh`, so an
+Files here are copied into each addon's `web/` by its `install.ps1`, so an
 addon stays self-contained and still looks like the others.
 
 | File | What |

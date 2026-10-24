@@ -5,8 +5,8 @@ short on purpose — the one thing it must establish is that your addon resolves
 a data path under GAMECORE_DATA and does not reach for GAMECORE_PATH.
 
 Why it has to set two different directories: GAMECORE_DATA *defaults* to
-GAMECORE_PATH, so on a real box today the two are the same directory and both
-spellings work. A test that lets them default proves nothing at all.
+GAMECORE_PATH (as in the core's paths.py), so a test that lets them default
+proves nothing at all.
 
 Run with:  python tests/test_paths.py
 """
@@ -67,16 +67,15 @@ del os.environ["ADDON_DATA_DIR"]
 # reachable under the other root. "Under DATA" alone still passes when the two
 # roots are equal, which is exactly the case this file exists to rule out.
 
-print("Fallback for a box that has not taken the P3 OTA")
-# Its systemd unit passes GAMECORE_PATH only. Every path must resolve exactly
-# where it did before — the split must cost nothing until the data moves.
+print("Fallback when only GAMECORE_PATH is set (a checkout)")
+# The core's own default: the data root is the code root.
 del os.environ["GAMECORE_DATA"]
 importlib.reload(server)
 check("DATA falls back to PATH", server.GAMECORE_DATA == CODE, str(server.GAMECORE_DATA))
 check("ADDON_DATA_DIR follows the fallback",
       server.ADDON_DATA_DIR == CODE / "addons" / "_template", str(server.ADDON_DATA_DIR))
 
-# An empty GAMECORE_DATA must not resolve every path to "/" — `or` not `get`.
+# An empty GAMECORE_DATA must not resolve every path to the cwd: `or`, not `get`.
 os.environ["GAMECORE_DATA"] = ""
 importlib.reload(server)
 check("empty GAMECORE_DATA falls back too", server.GAMECORE_DATA == CODE, str(server.GAMECORE_DATA))
