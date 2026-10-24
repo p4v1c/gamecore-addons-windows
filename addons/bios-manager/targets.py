@@ -7,7 +7,8 @@ Two sources, one per kind of system:
     it is what the launch gate checks, so a file put there is a file the core
     sees. Never re-derived here.
   * this module's own table for the emulators the core declares nothing for
-    (melonDS, Dolphin, mGBA): their paths are facts about those emulators.
+    (melonDS, Dolphin, mGBA): their Windows folders are facts about those
+    emulators, a portable install (a marker file next to the exe) included.
 """
 import json
 import logging
@@ -16,28 +17,36 @@ import tomllib
 import urllib.request
 from pathlib import Path
 
+import windows_dirs
+
 log = logging.getLogger("bios-manager")
 
 ADDON_DIR = Path(__file__).parent
-GAMECORE_PATH = Path(os.environ.get("GAMECORE_PATH", "/opt/GameCore"))
-# Temporary: keeps a box that has not taken the P3 OTA resolving as before.
+GAMECORE_PATH = Path(os.environ.get("GAMECORE_PATH", r"C:\Program Files\GameCore"))
+# The CLI always passes both; the fallback is the core's own default (paths.py).
 GAMECORE_DATA = Path(os.environ.get("GAMECORE_DATA") or GAMECORE_PATH)
 ADDON_DATA_DIR = Path(os.environ.get("ADDON_DATA_DIR") or GAMECORE_DATA / "addons" / ADDON_DIR.name)
-# GAMECORE_HOME lets tests point every emulator path into a sandbox.
-HOME = Path(os.environ.get("GAMECORE_HOME") or Path.home())
+# GAMECORE_HOME lets tests point every emulator path into a sandbox (windows_dirs).
+HOME = windows_dirs.home()
+APPDATA = windows_dirs.appdata()
+DOCUMENTS = windows_dirs.documents()
 SYSTEMS_FILE = GAMECORE_DATA / "config" / "systems.json"
 STAGING = ADDON_DATA_DIR / "firmware"
 CORE_BIOS = f"http://127.0.0.1:{int(os.environ.get('GAMECORE_BACKEND_PORT', '8765'))}/api/bios"
 CORE_TIMEOUT_S = 5
 
-_FLATPAK = HOME / ".var/app"
-# (flatpak dir, native dir) per emulator the core has no `bios` block for.
+# The user folder of each emulator the core has no `bios` block for: the first
+# that exists, else the first (where a fresh install puts it). Dolphin moved
+# from Documents to %APPDATA% in 2024; a box may have either.
 OWN_DIRS = {
-    "gamecube": (_FLATPAK / "org.DolphinEmu.dolphin-emu/data/dolphin-emu", HOME / ".local/share/dolphin-emu"),
-    "gb": (_FLATPAK / "io.mgba.mGBA/config/mgba", HOME / ".config/mgba"),
-    "gbc": (_FLATPAK / "io.mgba.mGBA/config/mgba", HOME / ".config/mgba"),
-    "gba": (_FLATPAK / "io.mgba.mGBA/config/mgba", HOME / ".config/mgba"),
+    "gamecube": (APPDATA / "Dolphin Emulator", DOCUMENTS / "Dolphin Emulator"),
+    "gb": (APPDATA / "mGBA",),
+    "gbc": (APPDATA / "mGBA",),
+    "gba": (APPDATA / "mGBA",),
 }
+# A portable install keeps its user folder by the exe: (marker file, folder under the exe's).
+PORTABLE = {"gamecube": ("portable.txt", "User"), "gb": ("portable.ini", ""),
+            "gbc": ("portable.ini", ""), "gba": ("portable.ini", "")}
 _NOT_NEEDED = "Plays without them; the emulator uses its own replacement."
 # name, note. None of them is required: each emulator has a built-in fallback.
 OWN_FILES = {
@@ -49,7 +58,7 @@ OWN_FILES = {
     "gbc": [("gbc_bios.bin", "Game Boy Color boot ROM. " + _NOT_NEEDED)],
     "gba": [("gba_bios.bin", "Game Boy Advance BIOS. " + _NOT_NEEDED)],
 }
-MELONDS_TOML = (_FLATPAK / "net.kuribo64.melonDS/config/melonDS/melonDS.toml", HOME / ".config/melonDS/melonDS.toml")
+MELONDS_TOML = APPDATA / "melonDS" / "melonDS.toml"
 # Target name -> (toml section, key, the field's label in melonDS's Emu settings).
 MELONDS_KEYS = {
     "bios9.bin": ("DS", "BIOS9Path", "DS-mode: DS ARM9 BIOS"),
@@ -89,18 +98,18 @@ def core_rows() -> dict[str, dict] | None:
         return None
 
 
-def _is_flatpak(system: dict) -> bool:
-    return system.get("path") == "flatpak"
-
-
 def own_dir(system: dict) -> Path:
-    flatpak, native = OWN_DIRS[system["id"]]
-    return flatpak if _is_flatpak(system) else native
+    exe = windows_dirs.exe_dir(system)
+    marker, sub = PORTABLE[system["id"]]
+    if exe and (exe / marker).exists():
+        return exe / sub if sub else exe
+    return windows_dirs.first_existing(*OWN_DIRS[system["id"]])
 
 
 def melonds_paths(system: dict) -> dict[str, Path | None]:
     """Each melonDS file's configured path; None where melonDS has none set."""
-    toml = MELONDS_TOML[0] if _is_flatpak(system) else MELONDS_TOML[1]
+    exe = windows_dirs.exe_dir(system)
+    toml = windows_dirs.first_existing(*([exe / "melonDS.toml"] if exe else []), MELONDS_TOML)
     try:
         conf = tomllib.loads(toml.read_text(encoding="utf-8-sig"))
     except (OSError, ValueError):
@@ -108,7 +117,7 @@ def melonds_paths(system: dict) -> dict[str, Path | None]:
     out = {}
     for name, (section, key, _label) in MELONDS_KEYS.items():
         value = conf.get(section, {}).get(key, "")
-        out[name] = Path(value) if isinstance(value, str) and value.startswith("/") else None
+        out[name] = Path(value) if isinstance(value, str) and value and Path(value).is_absolute() else None
     return out
 
 

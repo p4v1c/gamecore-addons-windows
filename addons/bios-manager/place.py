@@ -14,6 +14,7 @@ from datetime import datetime
 from pathlib import Path, PurePosixPath
 
 from identify import KNOWN, md5_of
+import windows_dirs
 from targets import ADDON_DATA_DIR, STAGING, destination, melonds_action
 
 # The DSi NAND holds the DSiWare saves: an existing one is never replaced.
@@ -21,21 +22,26 @@ NEVER_REPLACE = {"dsi_nand.bin"}
 
 MIN_FIRMWARE_NCAS = 30        # a Switch firmware has 200+; a handful of .nca is game content
 BACKUPS = ADDON_DATA_DIR / "backups"
-RYUJINX_APP = "io.github.ryubing.Ryujinx"
-RPCS3_APP = "net.rpcs3.RPCS3"
+# The exe named when systems.json does not give the emulator's own.
+DEFAULT_EXE = {"switch": "Ryujinx.exe", "rpcs3": "rpcs3.exe"}
 
 
-def firmware_action(system_id: str, staged: Path) -> dict:
+def _exe(system: dict) -> str:
+    folder = windows_dirs.exe_dir(system)
+    return str(folder / Path(system["path"]).name) if folder else DEFAULT_EXE[system["id"]]
+
+
+def firmware_action(system: dict, staged: Path) -> dict:
     """The emulator step that finishes an install the addon can only prepare:
-    {"action": what to do in the emulator, "command": the same from a shell}."""
-    if system_id == "switch":
+    {"action": what to do in the emulator, "command": the same from a prompt}."""
+    if system["id"] == "switch":
         return {"action": "Install it from Ryujinx: Actions, Install Firmware, Install a firmware from a "
                           f"directory, then pick {staged}. With Ryujinx closed, this command does the same:",
-                "command": f'flatpak run {RYUJINX_APP} --install-firmware "{staged}"'}
-    if system_id == "rpcs3":
+                "command": f'& "{_exe(system)}" --install-firmware "{staged}"'}
+    if system["id"] == "rpcs3":
         return {"action": f"Install it from RPCS3: File, Install Firmware, then pick {staged}. "
                           "Or run this, which opens RPCS3's window:",
-                "command": f'flatpak run {RPCS3_APP} --installfw "{staged}"'}
+                "command": f'& "{_exe(system)}" --installfw "{staged}"'}
     return {"action": ""}
 
 
@@ -98,7 +104,7 @@ def place_one(item: dict, system: dict, name: str, core: dict | None, ctx: dict)
         dest.parent.resolve().relative_to(root.resolve())
     except ValueError:
         return {"outcome": "ignored", "reason": f"{dest} leads outside {root}; left alone."}
-    if dest.is_symlink() or (dest.exists() and not dest.is_file()):
+    if dest.is_symlink() or dest.is_junction() or (dest.exists() and not dest.is_file()):
         return {"outcome": "ignored", "reason": f"{dest} is a link or a folder; left alone."}
     if ctx["written"].get(dest, item["md5"]) != item["md5"]:
         return {"outcome": "ignored", "reason": f"Another file in this upload already went to {dest}."}
@@ -110,13 +116,13 @@ def place_one(item: dict, system: dict, name: str, core: dict | None, ctx: dict)
     return result
 
 
-def stage_pup(item: dict) -> dict:
+def stage_pup(item: dict, system: dict) -> dict:
     staged = STAGING / "rpcs3" / "PS3UPDAT.PUP"
     _copy(item["path"], staged)
-    return {"outcome": "waiting", "dest": str(staged), **firmware_action("rpcs3", staged)}
+    return {"outcome": "waiting", "dest": str(staged), **firmware_action(system, staged)}
 
 
-def stage_switch_firmware(ncas: list[dict], stamp: str) -> dict:
+def stage_switch_firmware(ncas: list[dict], stamp: str, system: dict) -> dict:
     """One staged firmware folder out of every .nca of the upload."""
     names = {}
     for item in ncas:
@@ -130,7 +136,7 @@ def stage_switch_firmware(ncas: list[dict], stamp: str) -> dict:
     for name, item in names.items():
         _copy(item["path"], folder / name)
     return {"outcome": "waiting", "file": f"{len(names)} .nca files", "label": "Switch firmware",
-            "dest": str(folder), **firmware_action("switch", folder)}
+            "dest": str(folder), **firmware_action(system, folder)}
 
 
 def place_all(found: list[dict], systems_by_id: dict[str, dict], core: dict | None) -> list[dict]:
@@ -148,13 +154,13 @@ def place_all(found: list[dict], systems_by_id: dict[str, dict], core: dict | No
             results.append({**base, "outcome": "ignored",
                             "reason": "The emulator for this file is not installed on this box."})
         elif hit.get("kind") == "firmware":
-            results.append({**base, "system": system.get("label"), **stage_pup(item)})
+            results.append({**base, "system": system.get("label"), **stage_pup(item, system)})
         else:
             for name in hit["names"] or [_safe_name(item["file"])]:
                 results.append({**base, "system": system.get("label"), **place_one(item, system, name, core, ctx)})
     if ncas and "switch" in systems_by_id:
         results.append({"how": "name", "system": systems_by_id["switch"].get("label"),
-                        **stage_switch_firmware(ncas, ctx["stamp"])})
+                        **stage_switch_firmware(ncas, ctx["stamp"], systems_by_id["switch"])})
     elif ncas:
         results.append({"file": f"{len(ncas)} .nca files", "outcome": "ignored",
                         "reason": "The Switch emulator is not installed on this box."})

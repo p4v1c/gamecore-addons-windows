@@ -48,14 +48,15 @@ def _melonds_rows(system: dict) -> list[dict]:
     return rows
 
 
-def staged(system_id: str) -> list[dict]:
+def staged(system: dict) -> list[dict]:
     """Uploads parked under the addon's folder until the emulator takes them."""
+    system_id = system["id"]
     folder = STAGING / system_id
     if not folder.is_dir():
         return []
     out = []
     for p in sorted(folder.iterdir()):
-        step = melonds_action(p.name, p) if system_id == "melonds" else firmware_action(system_id, p)
+        step = melonds_action(p.name, p) if system_id == "melonds" else firmware_action(system, p)
         out.append({"name": p.name, "path": str(p), **step})
     return out
 
@@ -86,7 +87,7 @@ def report(core: dict | None) -> list[dict]:
         missing = [f for f in files if f["status"] != "ok"]
         out.append({
             "id": system["id"], "label": system.get("label", system["id"]), "note": note,
-            "files": files, "staged": staged(system["id"]),
+            "files": files, "staged": staged(system),
             "missing_required": sum(f["required"] for f in missing),
             "missing": len(missing),
         })

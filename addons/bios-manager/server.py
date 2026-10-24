@@ -30,8 +30,8 @@ WORK_ROOT = ADDON_DATA_DIR / "tmp"
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("bios-manager")
 
-# Multipart parts above 1 MB spill to the temp dir, and /tmp is RAM on the box:
-# a 400 MB firmware there would sit in memory twice.
+# Multipart parts above 1 MB spill to the temp dir: keep a 400 MB firmware on the
+# data volume it is headed for, not twice on the system drive's %TEMP%.
 tempfile.tempdir = str(WORK_ROOT)
 
 app = FastAPI(title="GameCore addon: BIOS Manager", root_path=os.environ.get("ADDON_BASE", ""))

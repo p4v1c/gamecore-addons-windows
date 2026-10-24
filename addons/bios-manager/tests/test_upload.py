@@ -4,7 +4,7 @@ import io
 import zipfile
 
 import pytest
-from conftest import DATA, DOLPHIN, DUCK_BIOS, HOME, MELON_TOML, PCSX2_BIOS, RA, RYU
+from conftest import APPDATA, DATA, DOLPHIN, DUCK_BIOS, EMU, HOME, MELON_TOML, MGBA, PCSX2_BIOS, RA, RYU, SHADPS4
 from fastapi.testclient import TestClient
 
 import identify
@@ -79,7 +79,7 @@ def test_switch_keys_by_content_whatever_the_name(client):
 def test_uninstalled_emulator_is_reported_not_written(client):
     r = upload(client, {"keys.txt": "0123456789abcdef0123456789abcdef # game\n"})[0]
     assert r["outcome"] == "ignored" and "not installed" in r["reason"]
-    assert not (HOME / ".var/app/info.cemu.Cemu").exists()
+    assert not (APPDATA / "Cemu").exists()
 
 
 def test_existing_files_same_replaced_kept(client):
@@ -108,6 +108,7 @@ def test_verified_dump_is_not_replaced_by_an_unverified_one(client):
 def test_ps3_pup_is_staged_with_the_emulator_step_then_removable(client):
     r = upload(client, {"PS3UPDAT.PUP": b"SCEUF" + b"\0" * 100})[0]
     assert r["outcome"] == "waiting" and "--installfw" in r["command"]
+    assert str(EMU / "RPCS3" / "rpcs3.exe") in r["command"], "the declared exe, as a PowerShell call"
     staged = client.get("api/status").json()["systems"]
     ps3 = next(s for s in staged if s["id"] == "rpcs3")
     assert ps3["staged"][0]["name"] == "PS3UPDAT.PUP"
@@ -128,7 +129,8 @@ def test_switch_firmware_set_is_staged_and_a_few_ncas_are_not(client):
 def test_melonds_configured_path_and_unconfigured_staging(client):
     MELON_TOML.parent.mkdir(parents=True)
     owner = HOME / "my bios/biosnds7.bin"
-    MELON_TOML.write_text(f'[DS]\nBIOS7Path = "{owner}"\nBIOS9Path = ""\n')
+    # melonDS writes Windows paths with escaped backslashes; a literal string reads the same.
+    MELON_TOML.write_text(f"[DS]\nBIOS7Path = '{owner}'\nBIOS9Path = \"\"\n")
     r = by_file(upload(client, {"bios7.bin": b"7" * 16384, "bios9.bin": b"9" * 4096}))
     assert r["bios7.bin"]["outcome"] == "placed" and owner.read_bytes() == b"7" * 16384
     assert r["bios9.bin"]["outcome"] == "waiting" and "ARM9" in r["bios9.bin"]["action"]
@@ -139,14 +141,14 @@ def test_existing_dsi_nand_is_never_replaced(client):
     nand = HOME / "ds/nand.bin"
     nand.parent.mkdir()
     nand.write_bytes(b"saves inside")
-    MELON_TOML.write_text(f'[DSi]\nNANDPath = "{nand}"\n')
+    MELON_TOML.write_text(f"[DSi]\nNANDPath = '{nand}'\n")
     r = upload(client, {"dsi_nand.bin": b"n" * (201 << 20)})[0]
     assert r["outcome"] == "kept" and nand.read_bytes() == b"saves inside"
 
 
 def test_melonds_path_outside_home_and_data_is_refused(client):
     MELON_TOML.parent.mkdir(parents=True)
-    MELON_TOML.write_text('[DS]\nBIOS7Path = "/etc/bios7.bin"\n')
+    MELON_TOML.write_text("[DS]\nBIOS7Path = 'C:\\Windows\\bios7.bin'\n")
     r = upload(client, {"bios7.bin": b"7" * 16384})[0]
     assert r["outcome"] == "ignored" and "outside" in r["reason"]
 
@@ -167,7 +169,7 @@ def test_bios_archive_named_by_the_core_is_placed_whole(client):
 def test_ps4_module_is_placed_but_a_ps3_firmware_piece_is_not(client):
     r = by_file(upload(client, {"libSceNgs2.sprx": b"ps4", "liblv2.sprx": b"ps3"}))
     assert r["libSceNgs2.sprx"]["outcome"] == "placed"
-    assert (HOME / ".var/app/net.shadps4.shadPS4/data/shadPS4/sys_modules/libSceNgs2.sprx").read_bytes() == b"ps4"
+    assert (SHADPS4 / "sys_modules/libSceNgs2.sprx").read_bytes() == b"ps4"
     assert r["liblv2.sprx"]["outcome"] == "ignored"
 
 
@@ -183,7 +185,7 @@ def test_core_down_blocks_core_systems_only(client, box, monkeypatch):
     monkeypatch.setattr(box, "core_rows", lambda: None)
     r = by_file(upload(client, {"prod.keys": PROD_KEYS, "gba_bios.bin": b"g" * 16384}))
     assert r["prod.keys"]["outcome"] == "ignored" and "not answering" in r["prod.keys"]["reason"]
-    assert (HOME / ".config/mgba/gba_bios.bin").is_file()
+    assert (MGBA / "gba_bios.bin").is_file()
 
 
 def test_oversized_upload_is_refused(client, box, monkeypatch):
@@ -198,3 +200,27 @@ def test_status_counts_missing_and_says_what_needs_nothing(client):
     assert systems["switch"]["missing_required"] == 1
     assert systems["wii"]["note"] and not systems["wii"]["files"]
     assert systems["gba"]["files"][0]["status"] == "absent"
+
+
+def test_a_portable_dolphin_keeps_the_ipl_by_its_exe(client):
+    """portable.txt next to Dolphin.exe moves its user folder to User\\ beside it."""
+    (EMU / "Dolphin").mkdir(parents=True)
+    (EMU / "Dolphin" / "portable.txt").write_text("")
+    r = upload(client, {"USA/IPL.bin": b"\0" * (2 << 20)})[0]
+    assert r["outcome"] == "placed"
+    assert (EMU / "Dolphin" / "User" / "GC" / "USA" / "IPL.bin").is_file()
+    assert not DOLPHIN.exists()
+
+
+def test_dolphin_from_before_2024_keeps_its_documents_folder(client):
+    (HOME / "Documents" / "Dolphin Emulator").mkdir(parents=True)
+    upload(client, {"JAP/IPL.bin": b"\0" * (2 << 20)})
+    assert (HOME / "Documents" / "Dolphin Emulator" / "GC" / "JAP" / "IPL.bin").is_file()
+
+
+def test_a_melonds_toml_by_its_exe_wins(client):
+    (EMU / "melonDS").mkdir(parents=True)
+    owner = HOME / "nds" / "bios7.bin"
+    (EMU / "melonDS" / "melonDS.toml").write_text(f"[DS]\nBIOS7Path = '{owner}'\n")
+    assert upload(client, {"bios7.bin": b"7" * 16384})[0]["outcome"] == "placed"
+    assert owner.read_bytes() == b"7" * 16384

@@ -3,7 +3,7 @@
   "name": "bios-manager",
   "label": "BIOS",
   "description": "Drop BIOS dumps, firmware and keys (files, folders or zips): each one is recognised and filed where its emulator reads it, with a checklist of what each system still lacks",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "type": "web",
   "default": false,
   "service": "user",
@@ -11,5 +11,8 @@
   "offline_assets": [
     "wheels"
   ],
-  "path": "/bios"
+  "path": "/bios",
+  "shared": [
+    "py/windows_dirs.py"
+  ]
 }

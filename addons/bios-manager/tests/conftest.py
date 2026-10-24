@@ -26,25 +26,31 @@ os.environ.update({
 os.environ.pop("ADDON_DATA_DIR", None)
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-RA = HOME / ".config/gamecore-retroarch/system"
-RYU = HOME / ".var/app/io.github.ryubing.Ryujinx/config/Ryujinx"
-PCSX2_BIOS = HOME / ".var/app/net.pcsx2.PCSX2/config/PCSX2/bios"
-DUCK_BIOS = HOME / ".local/share/duckstation/bios"
-MELON_TOML = HOME / ".var/app/net.kuribo64.melonDS/config/melonDS/melonDS.toml"
-DOLPHIN = HOME / ".var/app/org.DolphinEmu.dolphin-emu/data/dolphin-emu"
+APPDATA = HOME / "AppData" / "Roaming"
+DOCUMENTS = HOME / "Documents"
+RA = APPDATA / "RetroArch" / "system"
+RYU = APPDATA / "Ryujinx"
+PCSX2_BIOS = DOCUMENTS / "PCSX2" / "bios"
+DUCK_BIOS = DOCUMENTS / "DuckStation" / "bios"
+MELON_TOML = APPDATA / "melonDS" / "melonDS.toml"
+DOLPHIN = APPDATA / "Dolphin Emulator"
+MGBA = APPDATA / "mGBA"
+SHADPS4 = APPDATA / "shadPS4"
+# Where the systems.json below says the emulators are (absent: no portable marker).
+EMU = _TMP / "Emulators"
 
 SYSTEMS = [
-    {"id": "switch", "label": "Nintendo Switch", "path": "flatpak"},
-    {"id": "duckstation", "label": "PlayStation", "path": "lib/duck"},
-    {"id": "pcsx2", "label": "PlayStation 2", "path": "flatpak"},
-    {"id": "rpcs3", "label": "PlayStation 3", "path": "flatpak"},
-    {"id": "melonds", "label": "Nintendo DS", "path": "flatpak"},
-    {"id": "gamecube", "label": "GameCube", "path": "flatpak"},
-    {"id": "wii", "label": "Wii", "path": "flatpak"},
-    {"id": "gba", "label": "Game Boy Advance", "path": "/usr/bin/mgba-qt"},
-    {"id": "naomi", "label": "Naomi", "path": "/usr/bin/retroarch"},
-    {"id": "shadps4", "label": "PlayStation 4", "path": "flatpak"},
-    {"id": "lutris", "label": "PC", "path": "/usr/bin/python3"},
+    {"id": "switch", "label": "Nintendo Switch", "path": str(EMU / "Ryujinx" / "Ryujinx.exe")},
+    {"id": "duckstation", "label": "PlayStation", "path": str(EMU / "DuckStation" / "duckstation-qt-x64-ReleaseLTCG.exe")},
+    {"id": "pcsx2", "label": "PlayStation 2", "path": str(EMU / "PCSX2" / "pcsx2-qt.exe")},
+    {"id": "rpcs3", "label": "PlayStation 3", "path": str(EMU / "RPCS3" / "rpcs3.exe")},
+    {"id": "melonds", "label": "Nintendo DS", "path": str(EMU / "melonDS" / "melonDS.exe")},
+    {"id": "gamecube", "label": "GameCube", "path": str(EMU / "Dolphin" / "Dolphin.exe")},
+    {"id": "wii", "label": "Wii", "path": str(EMU / "Dolphin" / "Dolphin.exe")},
+    {"id": "gba", "label": "Game Boy Advance", "path": str(EMU / "mGBA" / "mGBA.exe")},
+    {"id": "naomi", "label": "Naomi", "path": str(EMU / "RetroArch" / "retroarch.exe")},
+    {"id": "shadps4", "label": "PlayStation 4", "path": str(EMU / "shadPS4" / "shadPS4.exe")},
+    {"id": "lutris", "label": "PC", "path": ""},
 ]
 
 
@@ -63,10 +69,10 @@ def core_report() -> dict:
         _row("switch", RYU / "system", [("prod.keys", True), ("title.keys", False)]),
         _row("duckstation", DUCK_BIOS, [], any_file=True),
         _row("pcsx2", PCSX2_BIOS, [("ps2-0150e-20001228.bin", True)]),
-        _row("rpcs3", HOME / ".var/app/net.rpcs3.RPCS3/config/rpcs3/dev_flash/sys/external", [("liblv2.sprx", True)]),
+        _row("rpcs3", EMU / "RPCS3" / "dev_flash" / "sys" / "external", [("liblv2.sprx", True)]),
         _row("naomi", RA, [("dc/naomi.zip", False)]),
-        _row("shadps4", HOME / ".var/app/net.shadps4.shadPS4/data/shadPS4", [("sys_modules/libSceNgs2.sprx", False)]),
-        _row("cemu", HOME / ".var/app/info.cemu.Cemu/data/Cemu", [("keys.txt", False)]),
+        _row("shadps4", SHADPS4, [("sys_modules/libSceNgs2.sprx", False)]),
+        _row("cemu", APPDATA / "Cemu", [("keys.txt", False)]),
     ]
     return {r["id"]: r for r in rows}
 
@@ -74,7 +80,7 @@ def core_report() -> dict:
 @pytest.fixture
 def box(monkeypatch):
     """A clean sandbox per test; the core answers unless the test says otherwise."""
-    for d in (HOME, DATA, CODE):
+    for d in (HOME, DATA, CODE, EMU):
         shutil.rmtree(d, ignore_errors=True)
     (DATA / "config").mkdir(parents=True)
     (DATA / "config/systems.json").write_text("\ufeff" + json.dumps(SYSTEMS), encoding="utf-8")
