@@ -1,4 +1,4 @@
-"""GameCore addon — RPCS3 Manager.
+r"""GameCore addon — RPCS3 Manager.
 
 Web UI to configure PS3 games from the couch: game list (games.yml +
 dev_hdd0), per-game config (custom_configs/config_<SERIAL>.yml, same
@@ -7,14 +7,14 @@ patch_config.yml). Every write is preceded by a timestamped .bak and all
 YAML goes through the string-preserving ryaml module — RPCS3 files contain
 scalars ("16:9", "01.10") that a naive round-trip would corrupt.
 
-This addon reads from both roots, and which one is not interchangeable:
-systems.json is the player's ($GAMECORE_DATA), the bundled RPCS3 binary is the
-release's ($GAMECORE_PATH/lib/rpcs3). Everything it writes lands in RPCS3's own
-config directory under $HOME, outside both roots.
+RPCS3 for Windows is portable: everything lives in its own folder, found
+from the `path` of the rpcs3 entry in the player's systems.json (GAMECORE_DATA)
+or RPCS3_DIR. The YAML files are in its config\ subfolder (recent builds) or
+next to rpcs3.exe (older ones); dev_hdd0\ and patches\ stay next to the exe.
+Everything this addon writes lands in that folder, outside both GameCore roots.
 """
 import asyncio
 import datetime
-import glob
 import json
 import os
 import re
@@ -34,82 +34,70 @@ import sfo
 from schema import SCHEMA, FIELD_BY_ID
 
 ADDON_DIR = Path(__file__).parent
-GAMECORE_PATH = Path(os.environ.get("GAMECORE_PATH", "/opt/GameCore"))
-# Two roots, mirroring the core's backend/services/paths.py: GAMECORE_PATH is
-# the installation (code shipped by the release, becoming a read-only mount),
-# GAMECORE_DATA is what the player owns. This addon reads from both, and the
-# split is not cosmetic — see _declared_path() and rpcs3_cmd() below.
-#
-# The fallback keeps a box that has not taken the P3 OTA — whose systemd unit
-# passes only GAMECORE_PATH — resolving to the byte-identical location it used
-# before. TEMPORARY: drop it once P12 has moved the data.
+GAMECORE_PATH = Path(os.environ.get("GAMECORE_PATH", r"C:\Program Files\GameCore"))
+# Two roots, mirroring the core's backend/services/paths.py. systems.json is the
+# player's, so it is read from GAMECORE_DATA; the fallback is the core's default.
 GAMECORE_DATA = Path(os.environ.get("GAMECORE_DATA") or GAMECORE_PATH)
 PORT = int(os.environ.get("ADDON_PORT", 8771))
 _SERIAL_RE = re.compile(r"^[A-Z0-9]{9}$")
-RPCS3_FLATPAK = "net.rpcs3.RPCS3"
+RPCS3_EXE = "rpcs3.exe"
+NOT_INSTALLED = "RPCS3 is not installed on this PC"
+
+
+def read_text(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
+
+
+def write_text(path: Path, text: str) -> None:
+    # LF, as RPCS3 writes them: Windows newline translation would rewrite every line.
+    path.write_text(text, encoding="utf-8", newline="\n")
 
 
 def _declared_path() -> str:
-    """The `path` of the rpcs3 entry in the box's systems.json ("flatpak" or a
-    native launcher path). "" when unreadable/absent — the addon then falls
-    back to what exists on disk, so it still works off-box."""
+    """The `path` of the rpcs3 entry in the player's systems.json; "" when unreadable or absent."""
     try:
-        # systems.json is data: the player edits it from the UI, and the core
-        # reads it through paths.config_dir(). It moves with GAMECORE_DATA.
-        systems = json.loads((GAMECORE_DATA / "config" / "systems.json").read_text())
+        systems = json.loads((GAMECORE_DATA / "config" / "systems.json").read_text(encoding="utf-8-sig"))
         return next((s.get("path", "") for s in systems if s.get("id") == "rpcs3"), "")
     except (OSError, ValueError):
         return ""
 
 
-def config_dir() -> Path:
-    """RPCS3 config dir — env override, then the install systems.json declares
-    (flatpak vs native), then whichever exists. A native dir kept around as a
-    post-migration backup must not shadow the flatpak the box actually runs."""
-    env = os.environ.get("RPCS3_CONFIG_DIR")
+def find_rpcs3() -> Path | None:
+    """RPCS3's folder: RPCS3_DIR, else the folder of the exe systems.json declares."""
+    env = os.environ.get("RPCS3_DIR")
     if env:
         return Path(env)
-    native = Path.home() / ".config" / "rpcs3"
-    flatpak = Path.home() / ".var/app" / RPCS3_FLATPAK / "config" / "rpcs3"
     declared = _declared_path()
-    if declared == "flatpak":
-        return flatpak
-    if declared:
-        return native
-    return native if native.exists() else flatpak
+    if not declared:
+        return None
+    path = Path(declared)
+    folder = path.parent if path.suffix.lower() == ".exe" else path
+    return folder if folder.is_absolute() else GAMECORE_DATA / folder
 
 
-def rpcs3_cmd(extra_env: dict | None = None):
-    """argv launching the configured RPCS3, or None when none is installed.
-    RPCS3_BIN env wins; otherwise systems.json decides flatpak vs the native
-    binary. extra_env is injected into the flatpak sandbox (--env=), which
-    plain process env can't reach."""
+def rpcs3_dir() -> Path:
+    """The folder holding rpcs3.exe, dev_hdd0 and patches. 503 when there is none."""
+    folder = find_rpcs3()
+    if folder is None or not folder.is_dir():
+        raise HTTPException(503, NOT_INSTALLED)
+    return folder
+
+
+def config_dir() -> Path:
+    """Where the YAML files are: config\\ in recent builds, the exe's folder in older ones."""
+    folder = rpcs3_dir()
+    sub = folder / "config"
+    return sub if (sub / "config.yml").exists() or (sub / "games.yml").exists() else folder
+
+
+def rpcs3_cmd() -> list[str] | None:
+    """argv launching RPCS3, or None when it is not there. RPCS3_BIN wins."""
     env_bin = os.environ.get("RPCS3_BIN")
     if env_bin:
         return [env_bin] if Path(env_bin).exists() else None
-    if _declared_path() == "flatpak":
-        have = subprocess.run(["flatpak", "info", RPCS3_FLATPAK],
-                              stdout=subprocess.DEVNULL,
-                              stderr=subprocess.DEVNULL).returncode == 0
-        if not have:
-            return None
-        return (["flatpak", "run"]
-                + [f"--env={k}={v}" for k, v in (extra_env or {}).items()]
-                + [RPCS3_FLATPAK])
-    # Deliberately GAMECORE_PATH, not GAMECORE_DATA: this is the RPCS3 binary.
-    # It is code — the player never edits it — so it stays on the read-only
-    # side. Moving it to the data root would look tidy and break the launcher on
-    # every box that sets the two roots apart, because nothing would ever put a
-    # binary there.
-    #
-    # It does NOT "arrive with the release", which is what this comment used to
-    # say: `lib/` is in neither release archive and `/lib/` is gitignored at the
-    # core's repo root — the provider downloads into it on the box. The
-    # conclusion is unchanged, the reason is not, and the difference matters to
-    # whoever assumes an OTA can repair a corrupt binary in here. It cannot;
-    # re-running the provider is what does. Measured in GamecoreRenew#36.
-    native = GAMECORE_PATH / "lib" / "rpcs3"
-    return [str(native)] if native.exists() else None
+    folder = find_rpcs3()
+    exe = folder / RPCS3_EXE if folder else None
+    return [str(exe)] if exe and exe.is_file() else None
 
 
 _KEEP_BACKUPS = 3
@@ -135,7 +123,7 @@ def backup(path: Path) -> None:
 
 def yload(path: Path):
     try:
-        return ryaml.load(path.read_text())
+        return ryaml.load(read_text(path))
     except FileNotFoundError:
         return None
     except Exception as e:
@@ -147,8 +135,10 @@ app = FastAPI(title="GameCore addon — RPCS3 Manager", root_path=os.environ.get
 
 @app.get("/api/health")
 def health():
-    cfg = config_dir()
-    return {"ok": True, "config_dir": str(cfg), "exists": cfg.exists()}
+    folder = find_rpcs3()
+    found = folder is not None and folder.is_dir()
+    return {"ok": True, "rpcs3_dir": str(folder) if folder else "", "exists": found,
+            "config_dir": str(config_dir()) if found else ""}
 
 
 # ── Games ─────────────────────────────────────────────────────────────────────
@@ -157,11 +147,11 @@ def _disc_sfo(game_path: Path) -> dict:
     return sfo.parse(game_path / "PS3_GAME" / "PARAM.SFO") or sfo.parse(game_path / "PARAM.SFO")
 
 
-def _game_versions(cfg: Path, serial: str, base_ver: str) -> list[str]:
+def _game_versions(serial: str, base_ver: str) -> list[str]:
     """Effective app versions: disc APP_VER plus any installed update's
     (game data dirs in dev_hdd0/game starting with the serial)."""
     versions = {base_ver} if base_ver else set()
-    game_dir = cfg / "dev_hdd0" / "game"
+    game_dir = rpcs3_dir() / "dev_hdd0" / "game"
     if game_dir.is_dir():
         for d in game_dir.iterdir():
             if d.name.startswith(serial):
@@ -185,13 +175,13 @@ def list_games():
                 "serial": serial,
                 "title": " ".join(meta.get("TITLE", p.name.strip("/") or serial).split()),
                 "source": "disc",
-                "versions": _game_versions(cfg, serial, meta.get("APP_VER", "")),
+                "versions": _game_versions(serial, meta.get("APP_VER", "")),
                 # folder deleted but games.yml entry left behind — RPCS3 (and
                 # we) keep listing it until the entry is removed
                 "missing": not p.exists(),
             }
 
-    hdd = cfg / "dev_hdd0" / "game"
+    hdd = rpcs3_dir() / "dev_hdd0" / "game"
     if hdd.is_dir():
         for d in sorted(hdd.iterdir()):
             meta = sfo.parse(d / "PARAM.SFO")
@@ -202,7 +192,7 @@ def list_games():
                 "serial": serial,
                 "title": " ".join(meta.get("TITLE", d.name).split()),
                 "source": "hdd",
-                "versions": _game_versions(cfg, serial, meta.get("APP_VER", "")),
+                "versions": _game_versions(serial, meta.get("APP_VER", "")),
                 "missing": False,
             }
 
@@ -225,7 +215,7 @@ def game_icon(serial: str):
     candidates = []
     if isinstance(mapping, dict) and serial in mapping:
         candidates.append(Path(str(mapping[serial])) / "PS3_GAME" / "ICON0.PNG")
-    candidates.append(cfg / "dev_hdd0" / "game" / serial / "ICON0.PNG")
+    candidates.append(rpcs3_dir() / "dev_hdd0" / "game" / serial / "ICON0.PNG")
     for c in candidates:
         if c.is_file():
             return FileResponse(str(c), media_type="image/png")
@@ -243,16 +233,16 @@ def remove_game(serial: str, data: bool = False):
     removed_entry = False
     games_yml = cfg / "games.yml"
     if games_yml.exists():
-        lines = games_yml.read_text().splitlines()
+        lines = read_text(games_yml).splitlines()
         kept = [l for l in lines if not re.match(rf"^{serial}:\s", l)]
         if len(kept) != len(lines):
             backup(games_yml)
-            games_yml.write_text("\n".join(kept) + ("\n" if kept else ""))
+            write_text(games_yml, "\n".join(kept) + ("\n" if kept else ""))
             removed_entry = True
 
     removed_data = []
     if data:
-        game_dir = cfg / "dev_hdd0" / "game"
+        game_dir = rpcs3_dir() / "dev_hdd0" / "game"
         if game_dir.is_dir():
             for d in game_dir.iterdir():
                 if d.is_dir() and d.name.startswith(serial):
@@ -390,9 +380,9 @@ async def put_game_config(serial: str, body: ConfigBody):
         global_path = config_dir() / "config.yml"
         if not global_path.exists():
             raise HTTPException(503, "global config.yml not found")
-        text = global_path.read_text()
+        text = read_text(global_path)
     else:
-        text = path.read_text()
+        text = read_text(path)
 
     for fid, value in body.values.items():
         fld = FIELD_BY_ID[fid]
@@ -400,7 +390,7 @@ async def put_game_config(serial: str, body: ConfigBody):
 
     path.parent.mkdir(parents=True, exist_ok=True)
     backup(path)
-    path.write_text(text)
+    write_text(path, text)
     return {"ok": True, "created": created, "changed": len(body.values)}
 
 
@@ -423,7 +413,7 @@ _META_KEYS = {"Version", "Anchors"}
 
 
 def _patch_files(serial: str) -> list[Path]:
-    pdir = config_dir() / "patches"
+    pdir = rpcs3_dir() / "patches"
     return [p for p in (pdir / "patch.yml", pdir / "imported_patch.yml",
                         pdir / f"{serial}_patch.yml") if p.is_file()]
 
@@ -526,7 +516,7 @@ async def toggle_patch(serial: str, body: ToggleBody):
     _set_path(tree, [body.hash, body.name, body.title, body.serial_key,
                      body.version, key], "true" if body.enabled else "false")
     backup(path)
-    path.write_text(ryaml.dump(tree))
+    write_text(path, ryaml.dump(tree))
     return {"ok": True, "enabled": body.enabled}
 
 
@@ -577,10 +567,10 @@ def download_official_patches():
         count = _validate_patch_yaml(ryaml.load(raw))
     except HTTPException as e:
         raise HTTPException(502, f"unexpected server response: {e.detail}")
-    path = config_dir() / "patches" / "patch.yml"
+    path = rpcs3_dir() / "patches" / "patch.yml"
     path.parent.mkdir(parents=True, exist_ok=True)
     backup(path)
-    path.write_text(raw)  # verbatim — no re-emit needed for a full replacement
+    write_text(path, raw)  # verbatim: no re-emit needed for a full replacement
     return {"ok": True, "patches": count, "file": path.name}
 
 
@@ -595,7 +585,7 @@ async def upload_patch(file: UploadFile = File(...)):
         raise HTTPException(400, f"invalid YAML: {e}")
     count = _validate_patch_yaml(tree)
 
-    path = config_dir() / "patches" / "imported_patch.yml"
+    path = rpcs3_dir() / "patches" / "imported_patch.yml"
     path.parent.mkdir(parents=True, exist_ok=True)
     existing = yload(path)
     if existing is None:
@@ -610,42 +600,17 @@ async def upload_patch(file: UploadFile = File(...)):
         group.update(patches)
         merged += len(patches)
     backup(path)
-    path.write_text(ryaml.dump(existing))
+    write_text(path, ryaml.dump(existing))
     return {"ok": True, "patches": count, "merged": merged, "file": path.name}
 
 
 # ── .pkg install (game updates / DLC) ─────────────────────────────────────────
 # RPCS3 refuses to install a pkg in --no-gui mode ("Cannot perform installation
-# in no-gui mode!") and this build ships no offscreen Qt plugin, so a real X
-# display is required. On a GameCore box that's the TV — we discover it exactly
-# like gamecore-ui.service does. A tiny progress dialog shows on the screen.
-
-def _discover_display() -> dict | None:
-    """Return env (DISPLAY + XAUTHORITY) for the box's active X session, or None."""
-    if os.environ.get("DISPLAY"):
-        env = {"DISPLAY": os.environ["DISPLAY"]}
-        if os.environ.get("XAUTHORITY"):
-            env["XAUTHORITY"] = os.environ["XAUTHORITY"]
-        return env
-    xauths = glob.glob(f"/run/user/{os.getuid()}/xauth_*")
-    xauth = xauths[0] if xauths else None
-    for disp in (":1", ":0", ":2"):
-        env = {"DISPLAY": disp}
-        if xauth:
-            env["XAUTHORITY"] = xauth
-        try:
-            r = subprocess.run(["xdpyinfo", "-display", disp], env={**os.environ, **env},
-                               capture_output=True, timeout=5)
-            if r.returncode == 0:
-                return env
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            # no xdpyinfo — trust a probable display so install can still be tried
-            return env
-    return None
-
+# in no-gui mode!"), so its window has to open. The addon's task runs in the
+# console user's session, so it opens on the TV with no display to discover.
 
 def _hdd_snapshot() -> dict:
-    game = config_dir() / "dev_hdd0" / "game"
+    game = rpcs3_dir() / "dev_hdd0" / "game"
     if not game.is_dir():
         return {}
     return {d.name: d.stat().st_mtime for d in game.iterdir() if d.is_dir()}
@@ -697,7 +662,7 @@ async def install_pkg(file: UploadFile = File(...)):
     if not name.lower().endswith(".pkg"):
         raise HTTPException(415, "not a .pkg file")
     if rpcs3_cmd() is None:
-        raise HTTPException(503, "RPCS3 not found (native binary or flatpak)")
+        raise HTTPException(503, NOT_INSTALLED)
     if _pkg_job["state"] == "running":
         raise HTTPException(409, "a .pkg install is already running")
     # Claim the job BEFORE the first await — otherwise two concurrent uploads
@@ -705,12 +670,7 @@ async def install_pkg(file: UploadFile = File(...)):
     _pkg_job.update(state="running", file=name, installed=[], error="")
 
     try:
-        disp = _discover_display()
-        if disp is None:
-            raise HTTPException(503, "no active screen on the box — a .pkg install needs "
-                                     "RPCS3's window; turn on the TV/box screen first")
-
-        staging = config_dir() / "pkg_staging"
+        staging = rpcs3_dir() / "pkg_staging"
         staging.mkdir(parents=True, exist_ok=True)
         dest = staging / re.sub(r"[^\w.\-]", "_", name)
         with dest.open("wb") as out:
@@ -719,15 +679,11 @@ async def install_pkg(file: UploadFile = File(...)):
 
         before = _hdd_snapshot()
         try:
-            cmd = rpcs3_cmd(extra_env=disp)
+            cmd = rpcs3_cmd()
             if cmd is None:
-                raise HTTPException(503, "RPCS3 not found (native binary or flatpak)")
-            proc = subprocess.Popen(
-                [*cmd, "--installpkg", str(dest)],
-                env={**os.environ, **disp},
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                start_new_session=True,
-            )
+                raise HTTPException(503, NOT_INSTALLED)
+            proc = subprocess.Popen([*cmd, "--installpkg", str(dest)], cwd=str(Path(cmd[0]).parent),
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except Exception as e:
             dest.unlink(missing_ok=True)
             raise HTTPException(500, f"could not launch RPCS3: {e}")
@@ -755,10 +711,8 @@ class _FreshStatic(StaticFiles):
     `web/index.html` is a single file that changes with every addon update,
     and it was served with no Cache-Control at all — so the browser applied
     its heuristic freshness and kept the OLD page for a while after
-    `gamecore-addon update`. On the reference box that meant a ROM Manager
-    that still showed one overlay slot per system the evening the core had
-    grown one per console, and "No overlay set" for a file that was there:
-    the new page was on disk and on the wire, the browser just never asked.
+    `gamecore-addon update`: the new page was on disk and on the wire, the
+    browser just never asked.
     Same rule the core applies to its theme files (`_NoCacheStatic`): small,
     local, and a stale copy costs more than a fetch.
     """

@@ -1,104 +1,86 @@
-"""Path resolution with two distinct roots — and the one path that must NOT move.
+"""Where RPCS3 for Windows keeps things, found from the player's systems.json.
 
-rpcs3-manager reads from both roots, and they are not interchangeable:
-
-  systems.json      the player's, edited from the UI      → GAMECORE_DATA
-  lib/rpcs3         the binary shipped with the release   → GAMECORE_PATH
-
-The second is the interesting half. Migrating it along with everything else
-would look consistent and would break the launcher on every box that sets the
-roots apart: nothing ever puts a binary under the data root, so rpcs3_cmd()
-would find nothing and PS3 games would silently stop launching. This file
-fails if someone "finishes the migration" later.
-
-A fake HOME keeps config_dir() away from the real ~/.var/app — this addon
-writes RPCS3's own config, and tests must never touch the box's.
-
-Run with:  python tests/test_paths.py     (needs the addon's requirements)
+RPCS3 on Windows is portable: one folder holds rpcs3.exe, dev_hdd0\\ and
+patches\\, and its YAML files sit in config\\ (recent builds) or next to the
+exe (older ones). The folder comes from the rpcs3 entry of systems.json, which
+is the player's file and so is read from GAMECORE_DATA: a decoy under
+GAMECORE_PATH fails the test if the addon reads the wrong root.
 """
 import importlib
 import json
-import os
 import sys
-import tempfile
 from pathlib import Path
 
-if hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-
-_TMP = tempfile.TemporaryDirectory()
-ROOT = Path(_TMP.name)
-CODE = ROOT / "GameCore"          # the installation — read-only in production
-DATA = ROOT / "userdata"          # the player's data — writable
-HOME = ROOT / "home"
-(CODE / "config").mkdir(parents=True)
-(DATA / "config").mkdir(parents=True)
-(CODE / "lib").mkdir(parents=True)
-HOME.mkdir()
-
-# A native RPCS3 shipped with the install, and a systems.json that declares it.
-NATIVE = CODE / "lib" / "rpcs3"
-NATIVE.write_text("#!/bin/sh\n")
-NATIVE.chmod(0o755)
-(DATA / "config" / "systems.json").write_text(json.dumps(
-    [{"id": "rpcs3", "path": "/opt/GameCore/lib/rpcs3"}]))
-# The stale copy under the CODE root is the trap: if the addon still reads
-# systems.json from GAMECORE_PATH it finds this one and reports "flatpak".
-(CODE / "config" / "systems.json").write_text(json.dumps(
-    [{"id": "rpcs3", "path": "flatpak"}]))
-
-os.environ["HOME"] = str(HOME)
-os.environ["GAMECORE_PATH"] = str(CODE)
-os.environ["GAMECORE_DATA"] = str(DATA)
-os.environ.pop("RPCS3_BIN", None)
-os.environ.pop("RPCS3_CONFIG_DIR", None)
+import pytest
+from fastapi import HTTPException
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "shared" / "py"))
-import server  # noqa: E402
-
-FAILURES = []
 
 
-def check(label, cond, detail=""):
-    print(("  ok   " if cond else "  FAIL ") + label + (f"  ({detail})" if detail and not cond else ""))
-    if not cond:
-        FAILURES.append(label)
+@pytest.fixture
+def roots(tmp_path, monkeypatch):
+    code, data, rpcs3 = tmp_path / "GameCore", tmp_path / "data", tmp_path / "Emulators" / "RPCS3"
+    for d in (code / "config", data / "config", rpcs3):
+        d.mkdir(parents=True)
+    (rpcs3 / "rpcs3.exe").write_bytes(b"MZ")
+    (data / "config" / "systems.json").write_text(json.dumps(
+        [{"id": "rpcs3", "path": str(rpcs3 / "rpcs3.exe")}]), encoding="utf-8")
+    (code / "config" / "systems.json").write_text(json.dumps(
+        [{"id": "rpcs3", "path": str(tmp_path / "decoy" / "rpcs3.exe")}]), encoding="utf-8")
+    monkeypatch.setenv("GAMECORE_PATH", str(code))
+    monkeypatch.setenv("GAMECORE_DATA", str(data))
+    for var in ("RPCS3_DIR", "RPCS3_BIN"):
+        monkeypatch.delenv(var, raising=False)
+    import server
+    importlib.reload(server)
+    return server, code, data, rpcs3
 
 
-print("Two distinct roots")
-check("code and data really differ", CODE.resolve() != DATA.resolve(),
-      "the rest of this file proves nothing otherwise")
-check("GAMECORE_DATA honoured", server.GAMECORE_DATA == DATA, str(server.GAMECORE_DATA))
+def test_the_folder_comes_from_the_data_roots_systems_json(roots):
+    server, _, _, rpcs3 = roots
+    assert server.find_rpcs3() == rpcs3
+    assert server.rpcs3_cmd() == [str(rpcs3 / "rpcs3.exe")]
 
-print("systems.json — the player's file, on the DATA root")
-# Reading the DATA copy yields the native path; the decoy under CODE says
-# "flatpak". The returned value names which file was actually opened.
-check("read from DATA, not PATH", server._declared_path() == "/opt/GameCore/lib/rpcs3",
-      server._declared_path())
 
-print("lib/rpcs3 — the release's binary, staying on the CODE root")
-cmd = server.rpcs3_cmd()
-check("launcher resolved", cmd is not None, "rpcs3_cmd() returned None")
-if cmd:
-    binary = Path(cmd[0])
-    check("binary under GAMECORE_PATH", binary == NATIVE, str(binary))
-    check("binary NOT under GAMECORE_DATA", DATA.resolve() not in binary.resolve().parents,
-          str(binary))
+def test_yaml_files_are_in_config_when_the_build_keeps_them_there(roots):
+    server, _, _, rpcs3 = roots
+    assert server.config_dir() == rpcs3, "an older build keeps config.yml next to the exe"
+    (rpcs3 / "config").mkdir()
+    (rpcs3 / "config" / "config.yml").write_text("Core: {}\n", encoding="utf-8")
+    assert server.config_dir() == rpcs3 / "config"
+    assert server.rpcs3_dir() == rpcs3, "dev_hdd0 and patches stay next to the exe"
 
-print("Fallback for a box that has not taken the P3 OTA")
-del os.environ["GAMECORE_DATA"]
-importlib.reload(server)
-check("DATA falls back to PATH", server.GAMECORE_DATA == CODE, str(server.GAMECORE_DATA))
-check("systems.json back under PATH", server._declared_path() == "flatpak",
-      server._declared_path())
 
-os.environ["GAMECORE_DATA"] = ""
-importlib.reload(server)
-check("empty GAMECORE_DATA falls back too", server.GAMECORE_DATA == CODE, str(server.GAMECORE_DATA))
+def test_rpcs3_dir_overrides_systems_json(roots, monkeypatch, tmp_path):
+    server, *_ = roots
+    other = tmp_path / "portable"
+    other.mkdir()
+    monkeypatch.setenv("RPCS3_DIR", str(other))
+    assert server.rpcs3_dir() == other
 
-print()
-if FAILURES:
-    print(f"{len(FAILURES)} check(s) FAILED: " + ", ".join(FAILURES))
-    sys.exit(1)
-print("All path tests passed.")
+
+def test_a_pc_without_rpcs3_answers_503_and_a_health_that_says_so(roots):
+    server, _, data, _ = roots
+    (data / "config" / "systems.json").write_text("[]", encoding="utf-8")
+    with pytest.raises(HTTPException) as e:
+        server.rpcs3_dir()
+    assert e.value.status_code == 503
+    assert server.health()["exists"] is False
+    assert server.rpcs3_cmd() is None
+
+
+def test_a_relative_folder_is_relative_to_the_data_root(roots):
+    server, _, data, _ = roots
+    (data / "config" / "systems.json").write_text(json.dumps(
+        [{"id": "rpcs3", "path": "emu\\rpcs3\\rpcs3.exe"}]), encoding="utf-8")
+    assert server.find_rpcs3() == data / "emu" / "rpcs3"
+
+
+def test_without_gamecore_data_the_data_root_is_the_code_root(roots, monkeypatch):
+    server, code, _, _ = roots
+    monkeypatch.delenv("GAMECORE_DATA")
+    importlib.reload(server)
+    assert server.GAMECORE_DATA == code
+    monkeypatch.setenv("GAMECORE_DATA", "")
+    importlib.reload(server)
+    assert server.GAMECORE_DATA == code
