@@ -11,5 +11,6 @@
   "offline_assets": [
     "wheels"
   ],
-  "path": "/rpcs3"
+  "path": "/rpcs3",
+  "shared": ["py/sfo.py"]
 }

@@ -11,5 +11,6 @@
   "offline_assets": [
     "wheels"
   ],
-  "path": "/saves"
+  "path": "/saves",
+  "shared": ["py/sfo.py"]
 }
