@@ -65,7 +65,7 @@ EMU = ROOT / "Emulators"
 (DATA / "config" / "systems.json").write_text(json.dumps([
     {"id": "gamecube", "path": str(EMU / "Dolphin" / "Dolphin.exe")},
     {"id": "rpcs3", "path": str(EMU / "RPCS3" / "rpcs3.exe")},
-    {"id": "pcsx2", "path": "emu\pcsx2\pcsx2-qt.exe"},
+    {"id": "pcsx2", "path": r"emu\pcsx2\pcsx2-qt.exe"},
 ]), encoding="utf-8")
 check("no portable.txt: Dolphin's user folder only",
       catalog.portable_bases("dolphin") == [], str(catalog.portable_bases("dolphin")))
