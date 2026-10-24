@@ -1,0 +1,11 @@
+# The same narrow set as the core (GamecoreWindows pyproject.toml): pyflakes
+# plus the pycodestyle rules that are defects rather than taste.
+line-length = 100
+target-version = "py312"
+
+[lint]
+select = ["E4", "E9", "F"]
+
+[lint.per-file-ignores]
+# Addon tests set the roots in the environment, then import `server`.
+"addons/*/tests/*.py" = ["E402", "F811"]
