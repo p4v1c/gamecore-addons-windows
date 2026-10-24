@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GameCore PS3 settings</title>
+<link rel="stylesheet" href="gamecore-ui.css">
+<link rel="stylesheet" href="gamecore-nav.css">
+<script src="gamecore-icons.js"></script>
+<script src="gamecore-nav.js" defer></script>
+<style>
+.rail-body { flex: 1; min-width: 0; }
+.rail-body .rail-name { display: block; }
+.rail-meta { font-size: 14px; color: var(--ink-3); display: flex; gap: 8px; align-items: center; }
+.rail-meta .ok { color: var(--ok); }
+
+.tabs { display: flex; padding: 0 32px; border-bottom: 1px solid var(--line); }
+.tab { border: 0; background: none; padding: 12px 4px; margin-right: 24px; font-size: 16px; font-weight: 600;
+  color: var(--ink-3); cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.tab:hover { color: var(--ink); }
+.tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent-soft); }
+
+.status { display: flex; align-items: center; flex-wrap: wrap; gap: 12px 24px; margin-top: 16px; padding: 14px 16px;
+  border: 1px solid var(--line); border-radius: var(--r-card); background: var(--surface); font-size: 15px; color: var(--ink-2); }
+.status.custom { border-color: rgba(95, 211, 154, 0.35); }
+.status.custom b { color: var(--ok); }
+.status .btn { margin-left: auto; }
+
+.set { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 8px 16px; }
+.opt { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 14px;
+  border: 1px solid var(--line); border-radius: var(--r-control); background: var(--surface); }
+.opt.differs { box-shadow: inset 3px 0 0 var(--ok); }
+.opt.dirty { border-color: var(--accent-soft); }
+.opt-name { font-size: 16px; font-weight: 600; }
+.opt-hint, .opt-global { font-size: 14px; color: var(--ink-3); }
+.opt select, .opt input[type=number] { min-height: 36px; padding: 0 10px; border-radius: var(--r-control);
+  border: 1px solid var(--line-strong); background: var(--bg); font-size: 15px; max-width: 220px; }
+.opt input[type=number] { width: 96px; }
+
+.switch { position: relative; width: 44px; height: 24px; flex-shrink: 0; cursor: pointer; }
+.switch input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+.switch span { position: absolute; inset: 0; border-radius: 12px; background: var(--hover); pointer-events: none; }
+.switch span::before { content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px;
+  border-radius: 50%; background: var(--ink-3); transition: transform .15s; }
+.switch input:checked + span { background: var(--accent); }
+.switch input:checked + span::before { transform: translateX(20px); background: #fff; }
+.switch input:focus-visible + span { outline: 2px solid var(--accent-soft); outline-offset: 2px; }
+.switch input:disabled + span { opacity: .4; }
+
+.save-bar { position: sticky; bottom: 0; display: flex; align-items: center; justify-content: flex-end; gap: 8px;
+  margin-top: 24px; padding: 12px 0; background: var(--bg); border-top: 1px solid var(--line); }
+.save-bar .pending { font-size: 15px; color: var(--ink-2); margin-right: auto; }
+
+.patch { padding: 14px 16px; }
+.patch + .patch { border-top: 1px solid var(--line); }
+.patch-name { font-size: 16px; font-weight: 600; display: flex; flex-wrap: wrap; align-items: baseline; gap: 12px; }
+.patch-name .on { font-size: 14px; color: var(--ok); }
+.patch-meta { font-size: 14px; color: var(--ink-3); margin-top: 2px; }
+.patch-notes { font-size: 15px; color: var(--ink-2); margin-top: 6px; max-width: 80ch; }
+.versions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.version { display: flex; align-items: center; gap: 12px; padding: 6px 8px 6px 12px; border-radius: var(--r-control);
+  background: var(--raised); font-size: 15px; }
+.version.other { opacity: .55; }
+.version .tag { color: var(--accent-soft); }
+details.disclosure { margin-top: 32px; }
+
+@media (max-width: 760px) {
+  .tabs { padding: 0 16px; }
+  .set { grid-template-columns: 1fr; }
+  .rail-meta { display: none; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="rail">
+    <div class="rail-head">
+      <div class="rail-title">PS3 games</div>
+      <div class="rail-sub" id="rail-sub">Loading</div>
+    </div>
+    <nav class="rail-list" id="game-list" aria-label="Games"><div class="spinner"></div></nav>
+  </aside>
+  <main class="page" id="page">
+    <div class="spinner"></div>
+  </main>
+</div>
+<div class="toasts" id="toasts" role="status"></div>
+
+<script>
+let games = [], schema = null, globals = {};
+let active = null, tab = 'config';
+let cfgState = { exists: false, values: {}, dirty: {} };
+
+const $ = id => document.getElementById(id);
+const I = (n, c) => gcIcon(n, c);
+const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const plural = (n, one, many) => `${n} ${n === 1 ? one : (many || one + 's')}`;
+function toast(m, err){const e=document.createElement('div');e.className='toast'+(err?' error':'');e.textContent=m;$('toasts').appendChild(e);setTimeout(()=>e.remove(),err?6000:3500)}
+async function jget(u){const r=await fetch(u);if(!r.ok)throw new Error((await r.json().catch(()=>({}))).detail||r.status);return r.json()}
+async function jsend(url,method,body){
+  const r=await fetch(url,{method,headers:{'Content-Type':'application/json'},body:body!==undefined?JSON.stringify(body):undefined});
+  if(!r.ok)throw new Error((await r.json().catch(()=>({}))).detail||r.status);return r.json()
+}
+const bodyError = (what, e) => `<div class="empty error">${what}: ${esc(e.message)}</div>`;
+
+// ── games rail ───────────────────────────────────────────────────────────────
+async function loadGames() {
+  try {
+    [games, {schema, globals} = {}] = await Promise.all([jget('api/games'), jget('api/schema')]);
+  } catch (e) { $('game-list').innerHTML = bodyError("Couldn't list the games", e); return; }
+  $('rail-sub').textContent = plural(games.length, 'game');
+  $('game-list').innerHTML = games.map(g => `
+    <button class="rail-item" id="game-${g.serial}" onclick="selectGame('${g.serial}')"
+            ${active && g.serial === active.serial ? 'aria-current="true"' : ''}>
+      <img class="rail-thumb" src="api/games/${g.serial}/icon" alt="" loading="lazy" onerror="this.style.visibility='hidden'">
+      <span class="rail-body">
+        <span class="rail-name" title="${esc(g.title)}">${esc(g.title)}</span>
+        <span class="rail-meta">${g.serial}
+          ${g.has_custom_config ? '<span class="ok">Own settings</span>' : ''}
+          ${g.missing ? '<span class="tag" title="The game folder is gone, only its entry in the list remains">Missing</span>' : ''}</span>
+      </span>
+    </button>`).join('') || '<div class="empty">No PS3 game found. Add one with the ROM manager.</div>';
+
+  // deep links: ?game=BCES01670&tab=patches (used by external UIs and bookmarks)
+  if (!active) {
+    const qp = new URLSearchParams(location.search);
+    const g = games.find(x => x.serial === qp.get('game')) || games[0];
+    if (qp.get('tab') === 'patches') tab = 'patches';
+    if (g) selectGame(g.serial);
+    else $('page').innerHTML = '<div class="page-body"><div class="empty">Nothing to set up yet.</div></div>';
+  }
+}
+
+function selectGame(serial) {
+  active = games.find(g => g.serial === serial);
+  document.querySelectorAll('.rail-item').forEach(el => el.removeAttribute('aria-current'));
+  $(`game-${serial}`)?.setAttribute('aria-current', 'true');
+  const v = active.versions.length ? `, version ${active.versions.join(', ')}` : '';
+  $('page').innerHTML = `
+    <header class="page-head">
+      <div>
+        <h1 class="page-title">${esc(active.title)}</h1>
+        <div class="page-meta">${active.serial}${esc(v)}</div>
+      </div>
+      <div class="page-actions">
+        <button class="btn danger" onclick="removeGame()" title="Remove this game from RPCS3's list">${I('trash','sm')}Remove</button>
+      </div>
+    </header>
+    <div class="tabs" role="tablist">
+      <button class="tab" role="tab" id="tab-config" onclick="showTab('config')">Settings</button>
+      <button class="tab" role="tab" id="tab-patches" onclick="showTab('patches')">Patches</button>
+    </div>
+    <div class="page-body" id="content"></div>`;
+  showTab(tab);
+}
+
+function showTab(t) {
+  tab = t;
+  $('tab-config').setAttribute('aria-selected', t === 'config');
+  $('tab-patches').setAttribute('aria-selected', t === 'patches');
+  history.replaceState(null, '', `?game=${active.serial}${t === 'patches' ? '&tab=patches' : ''}`);
+  if (t === 'config') loadConfig(); else loadPatches();
+}
+
+async function removeGame() {
+  if (!active) return;
+  if (!confirm(`Remove "${active.title}" (${active.serial}) from RPCS3's game list?\n\n` +
+      'Its games.yml entry is deleted and a backup is kept. The game folder and your saves are not touched.')) return;
+  let data = false;
+  if (active.source === 'hdd' ||
+      confirm('Also delete its installed updates and game data in dev_hdd0/game?\n\n' +
+              'OK deletes the updates too. Cancel keeps them.')) data = true;
+  if (active.source === 'hdd' &&
+      !confirm('This game is installed on the PS3 drive: removing its dev_hdd0 data removes the game itself. Saves are kept. Continue?')) return;
+  try {
+    const r = await fetch(`api/games/${active.serial}?data=${data}`, { method: 'DELETE' });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.detail || r.status);
+    toast(`Removed ${active.title} from the list${d.removed_data.length ? `, with ${d.removed_data.join(', ')}` : ''}`);
+    active = null;
+    $('page').innerHTML = '<div class="page-body"><div class="empty">Game removed. Pick another one.</div></div>';
+    loadGames();
+  } catch (e) { toast(`Couldn't remove it: ${e.message}`, true); }
+}
+
+// ── settings tab ─────────────────────────────────────────────────────────────
+async function loadConfig() {
+  $('content').innerHTML = '<div class="spinner"></div>';
+  let data;
+  try { data = await jget(`api/games/${active.serial}/config`); }
+  catch (e) { $('content').innerHTML = bodyError("Couldn't read the settings", e); return; }
+  cfgState = { exists: data.exists, values: data.values, dirty: {} };
+  renderConfig();
+}
+
+function pkgZoneHTML() {
+  return `
+    <div class="drops" style="margin-top:24px">
+      <label class="drop" id="pkg-dz" ondragover="event.preventDefault();this.classList.add('hover')"
+             ondragleave="this.classList.remove('hover')" ondrop="dropPkg(event)">
+        ${I('download')}
+        <span><b>Install an update or DLC</b>Drop a .pkg file here. RPCS3 opens on the TV and installs it.</span>
+        <input type="file" accept=".pkg" onchange="uploadPkg(this.files[0]);this.value=''">
+      </label>
+    </div>`;
+}
+
+function dropPkg(e) {
+  e.preventDefault();
+  $('pkg-dz')?.classList.remove('hover');
+  const f = e.dataTransfer.files[0];
+  if (f) uploadPkg(f);
+}
+
+async function uploadPkg(file) {
+  if (!file) return;
+  if (!file.name.toLowerCase().endsWith('.pkg')) { toast('That is not a .pkg file', true); return; }
+  const dz = $('pkg-dz');
+  if (dz) dz.style.opacity = '.5';
+  const form = new FormData();
+  form.append('file', file);
+  try {
+    const r = await fetch('api/pkg/install', { method: 'POST', body: form });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.detail || r.status);
+    toast(`Uploaded. RPCS3 is installing ${file.name} on the TV`);
+    pollPkg();
+  } catch (e) {
+    if (dz) dz.style.opacity = '1';
+    toast(`Couldn't install it: ${e.message}`, true);
+  }
+}
+
+async function pollPkg() {
+  try {
+    const s = await jget('api/pkg/status');
+    if (s.state === 'running') { setTimeout(pollPkg, 3000); return; }
+    const dz = $('pkg-dz'); if (dz) dz.style.opacity = '1';
+    if (s.state === 'done') {
+      toast(`Installed ${s.installed.join(', ')}`);
+      loadGames();
+      if (active && tab === 'config') loadConfig();
+    } else if (s.state === 'error') {
+      toast(`Couldn't install it: ${s.error}`, true);
+    }
+  } catch (e) { setTimeout(pollPkg, 3000); }
+}
+
+function renderConfig() {
+  const status = cfgState.exists
+    ? `<div class="status custom"><span><b>This game has its own settings.</b> They replace the global ones.</span>
+         <button class="btn danger" onclick="resetConfig()">${I('restore','sm')}Use global settings</button></div>`
+    : `<div class="status"><span>This game uses the global settings. Change one below and it gets its own
+         <code>config_${active.serial}.yml</code>, like RPCS3 does.</span></div>`;
+
+  const groups = schema.map(grp => `
+    <section class="section">
+      <div class="section-head"><h2 class="section-title">${esc(grp.label)}</h2></div>
+      <div class="set">${grp.fields.map(fieldHTML).join('')}</div>
+    </section>`).join('');
+
+  $('content').innerHTML = pkgZoneHTML() + status + groups + `
+    <div class="save-bar">
+      <span class="pending" id="dirty-count"></span>
+      <button class="btn" onclick="loadConfig()">Discard</button>
+      <button class="btn primary" id="btn-save" onclick="saveConfig()" disabled>${I('save','sm')}Save</button>
+    </div>`;
+}
+
+function fieldHTML(f) {
+  const cur = current(f.id), glob = globals[f.id];
+  let ctrl;
+  if (f.type === 'enum') {
+    ctrl = `<select aria-label="${esc(f.key)}" onchange="setVal('${f.id}',this.value)">${f.options.map(o =>
+      `<option ${o === cur ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select>`;
+  } else if (f.type === 'bool') {
+    ctrl = `<label class="switch"><input type="checkbox" aria-label="${esc(f.key)}" ${cur === 'true' ? 'checked' : ''}
+      onchange="setVal('${f.id}',this.checked?'true':'false')"><span></span></label>`;
+  } else {
+    ctrl = `<input type="number" aria-label="${esc(f.key)}" min="${f.min}" max="${f.max}" value="${esc(cur ?? '')}"
+      onchange="setVal('${f.id}',this.value)">`;
+  }
+  const differs = cfgState.exists && glob !== undefined && cur !== undefined && cur !== glob;
+  return `<div class="opt ${differs ? 'differs' : ''}" id="field-${cssId(f.id)}">
+    <div>
+      <div class="opt-name">${esc(f.key)}</div>
+      ${f.hint ? `<div class="opt-hint">${esc(f.hint)}</div>` : ''}
+      ${glob !== undefined ? `<div class="opt-global">Global: ${esc(glob)}</div>` : ''}
+    </div>
+    ${ctrl}</div>`;
+}
+
+function cssId(s){return s.replace(/[^a-zA-Z0-9]/g,'_')}
+function current(id){return id in cfgState.dirty ? cfgState.dirty[id] : cfgState.values[id]}
+
+function setVal(id, value) {
+  if (value === cfgState.values[id]) delete cfgState.dirty[id];
+  else cfgState.dirty[id] = value;
+  const n = Object.keys(cfgState.dirty).length;
+  $('btn-save').disabled = n === 0;
+  $('dirty-count').textContent = n ? `${plural(n, 'change')} not saved` : '';
+  $(`field-${cssId(id)}`).classList.toggle('dirty', id in cfgState.dirty);
+}
+
+async function afterConfigChange(msg) {
+  toast(msg);
+  await loadGames();
+  loadConfig();
+}
+
+async function saveConfig() {
+  const n = Object.keys(cfgState.dirty).length;
+  try {
+    const r = await jsend(`api/games/${active.serial}/config`, 'PUT', { values: cfgState.dirty });
+    active.has_custom_config = true;
+    afterConfigChange(r.created ? `Own settings created with ${plural(n, 'change')}` : `Saved ${plural(n, 'change')}, backup kept`);
+  } catch (e) { toast(`Couldn't save: ${e.message}`, true); }
+}
+
+async function resetConfig() {
+  if (!confirm(`Delete the own settings of ${active.title}?\nA backup is kept next to them.`)) return;
+  try {
+    await jsend(`api/games/${active.serial}/config`, 'DELETE');
+    active.has_custom_config = false;
+    afterConfigChange('Back on the global settings');
+  } catch (e) { toast(`Couldn't reset: ${e.message}`, true); }
+}
+
+// ── patches tab ──────────────────────────────────────────────────────────────
+async function loadPatches() {
+  $('content').innerHTML = '<div class="spinner"></div>';
+  let data;
+  try { data = await jget(`api/games/${active.serial}/patches`); }
+  catch (e) { $('content').innerHTML = bodyError("Couldn't read the patches", e); return; }
+  const patches = data.patches, cur = data.current_version;
+  window._patches = patches;
+
+  const head = `
+    <div class="drops" style="margin-top:24px">
+      <label class="drop" id="patch-dz" ondragover="event.preventDefault();this.classList.add('hover')"
+             ondragleave="this.classList.remove('hover')" ondrop="dropPatch(event)">
+        ${I('upload')}
+        <span><b>Import a patch file</b>Drop a .yml from the RPCS3 wiki or Discord. It is checked, then added to imported_patch.yml.</span>
+        <input type="file" accept=".yml,.yaml" onchange="uploadPatch(this.files[0]);this.value=''">
+      </label>
+    </div>
+    <div style="display:flex;justify-content:flex-end;margin-top:12px">
+      <button class="btn" id="btn-dl-official" onclick="downloadOfficial(this)">${I('restore','sm')}Update the official patch list</button>
+    </div>`;
+
+  // One block per patch name; inside, one switch per game version.
+  // Works with GLOBAL indices into `patches` so the switches stay correct.
+  function blocks(idxList) {
+    const groups = new Map();
+    idxList.forEach(i => {
+      const name = patches[i].name;
+      if (!groups.has(name)) groups.set(name, []);
+      groups.get(name).push(i);
+    });
+    return `<div class="list">${[...groups.entries()].map(([name, idxs]) => {
+      const first = patches[idxs[0]];
+      const nOn = idxs.filter(i => patches[i].enabled).length;
+      const meta = [
+        first.author && `by ${esc(first.author)}`,
+        first.patch_version && `patch ${esc(first.patch_version)}`,
+        esc(first.files.join(', ')),
+      ].filter(Boolean).join(', ');
+      const manyTitles = new Set(idxs.map(i => patches[i].title)).size > 1;  // e.g. a collection disc
+      const rows = idxs.map(i => {
+        const p = patches[i];
+        const isCur = p.version === cur && p.version !== 'All';
+        return `
+          <div class="version ${p.version_match ? '' : 'other'}"
+               title="${p.version_match ? 'Turn on or off for this game version' : 'This game version is not installed'}">
+            ${manyTitles ? `<span>${esc(p.title)}</span>` : ''}
+            <span${manyTitles ? ' style="color:var(--ink-3)"' : ''}>${p.version === 'All' ? 'All versions' : 'Version ' + esc(p.version)}</span>
+            ${p.patch_version !== first.patch_version ? `<span style="color:var(--ink-3)">patch ${esc(p.patch_version)}</span>` : ''}
+            ${isCur ? '<span class="tag">Installed</span>' : ''}
+            <label class="switch"><input type="checkbox" aria-label="${esc(name)}, ${esc(p.version)}" ${p.enabled ? 'checked' : ''}
+              onchange="togglePatch(${i},this)"><span></span></label>
+          </div>`;
+      }).join('');
+      return `
+        <div class="patch">
+          <div class="patch-name">${esc(name)}${nOn ? `<span class="on">On${idxs.length > 1 ? ` for ${nOn}` : ''}</span>` : ''}</div>
+          <div class="patch-meta">${meta}</div>
+          ${first.notes ? `<div class="patch-notes">${esc(first.notes)}</div>` : ''}
+          <div class="versions">${rows}</div>
+        </div>`;
+    }).join('')}</div>`;
+  }
+
+  const allIdx = patches.map((_, i) => i);
+  const specificIdx = allIdx.filter(i => !patches[i].generic);
+  const genericIdx = allIdx.filter(i => patches[i].generic);
+  const genericOn = genericIdx.filter(i => patches[i].enabled).length;
+
+  let html = head + `<section class="section"><div class="section-head"><h2 class="section-title">For this game</h2>
+    <span class="section-count">${specificIdx.length || ''}</span></div>`;
+  html += specificIdx.length ? blocks(specificIdx)
+    : `<div class="empty">No patch made for ${active.serial}.</div>`;
+  html += '</section>';
+  if (genericIdx.length) {
+    html += `
+      <details class="disclosure" ${genericOn ? 'open' : ''}>
+        <summary>${I('patch')}Generic patches, ${genericIdx.length}${genericOn ? `, ${genericOn} on` : ''}</summary>
+        <div class="disclosure-body">
+          <p class="lede">These target a module shared by many games, such as SPU MLAA. RPCS3 applies one only
+            when its hash matches, so turning on a patch that names another game does nothing here.</p>
+          ${blocks(genericIdx)}
+        </div>
+      </details>`;
+  }
+  $('content').innerHTML = html;
+}
+
+async function togglePatch(i, input) {
+  const p = window._patches[i];
+  input.disabled = true;
+  try {
+    await jsend(`api/games/${active.serial}/patches/toggle`, 'POST', {
+      hash: p.hash, name: p.name, title: p.title,
+      serial_key: p.serial_key, version: p.version, enabled: input.checked,
+    });
+    toast(`${p.name} ${input.checked ? 'on' : 'off'}. Restart the game to apply it`);
+    loadPatches();
+  } catch (e) { input.checked = !input.checked; input.disabled = false; toast(`Couldn't change it: ${e.message}`, true); }
+}
+
+function dropPatch(e) {
+  e.preventDefault();
+  $('patch-dz').classList.remove('hover');
+  const f = e.dataTransfer.files[0];
+  if (f) uploadPatch(f);
+}
+
+async function downloadOfficial(btn) {
+  const label = btn.innerHTML;
+  btn.disabled = true; btn.textContent = 'Downloading';
+  try {
+    const r = await fetch('api/patches/download-official', { method: 'POST' });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.detail || r.status);
+    toast(`Official list updated, ${d.patches} patches, backup kept`);
+    loadPatches();
+  } catch (e) {
+    btn.disabled = false; btn.innerHTML = label;
+    toast(`Couldn't download it: ${e.message}`, true);
+  }
+}
+
+async function uploadPatch(file) {
+  if (!file) return;
+  const form = new FormData();
+  form.append('file', file);
+  try {
+    const r = await fetch('api/patches/upload', { method: 'POST', body: form });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.detail || r.status);
+    toast(`${file.name}: ${plural(data.merged, 'patch', 'patches')} added to ${data.file}`);
+    loadPatches();
+  } catch (e) { toast(`Couldn't import it: ${e.message}`, true); }
+}
+
+loadGames();
+</script>
+</body>
+</html>

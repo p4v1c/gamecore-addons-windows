@@ -1,0 +1,46 @@
+/* GameCore — shared addon navigation bar. Uses the tokens of shared/ui/gamecore-ui.css
+   when the page loads it; the fallbacks keep a third-party addon's bar in the same look. */
+.gc-nav {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  height: var(--nav-h, 48px);
+  z-index: 1000;
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+  padding: 0 16px;
+  background: var(--bg, #09090f);
+  border-bottom: 1px solid var(--line, rgba(255, 255, 255, 0.08));
+  font-family: var(--font, "Source Sans 3", system-ui, sans-serif);
+  font-size: 15px;
+  overflow-x: auto;
+}
+.gc-nav-brand {
+  display: flex;
+  align-items: center;
+  font-weight: 700;
+  font-size: 16px;
+  color: #fff;
+  margin-right: 16px;
+  user-select: none;
+  white-space: nowrap;
+}
+.gc-nav-item {
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  color: var(--ink-3, rgba(255, 255, 255, 0.6));
+  text-decoration: none;
+  font-weight: 600;
+  white-space: nowrap;
+  border-bottom: 2px solid transparent;
+}
+.gc-nav-item:hover { color: var(--ink, #fff); }
+.gc-nav-item.active {
+  color: var(--ink, #fff);
+  border-bottom-color: var(--accent-soft, #f2a46a);
+}
+.gc-nav-item:focus-visible { outline: 2px solid var(--accent-soft, #f2a46a); outline-offset: -2px; }
+
+/* Push the page below the fixed bar. */
+body.gc-nav-present { padding-top: var(--nav-h, 48px) !important; }
