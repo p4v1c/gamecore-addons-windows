@@ -5,10 +5,9 @@ writes are ROMs. If it resolves `romsPath` under GAMECORE_PATH once the data
 lives elsewhere, uploads land in a directory the core's scanner no longer
 reads: the upload reports success and the game never appears.
 
-On a real box today GAMECORE_DATA defaults to GAMECORE_PATH, so both spellings
-work and the mistake is invisible. These tests therefore set two genuinely
-different directories — that is the only configuration in which the assertion
-means anything.
+GAMECORE_DATA defaults to GAMECORE_PATH (as in the core's paths.py), so a test
+that lets them default cannot see the mistake. These tests therefore set two
+genuinely different directories.
 
 Run with:  python tests/test_paths.py     (needs the addon's requirements)
 """
@@ -59,40 +58,43 @@ check("relative romsPath lands under DATA", under(rel, DATA), str(rel))
 check("relative romsPath NOT under PATH", not under(rel, CODE), str(rel))
 check("relative romsPath keeps its subpath", rel == DATA / "emu" / "duckstation", str(rel))
 
-absolute = server.roms_path_of({"romsPath": "/mnt/usb/roms/psx"})
-check("absolute romsPath left alone", absolute == Path("/mnt/usb/roms/psx"), str(absolute))
+absolute = server.roms_path_of({"romsPath": "E:\\Roms\\psx"})
+check("absolute romsPath left alone", absolute == Path("E:\\Roms\\psx"), str(absolute))
 
 check("empty romsPath → None", server.roms_path_of({"romsPath": ""}) is None)
 check("missing romsPath → None", server.roms_path_of({}) is None)
 
-print("Overlays are READ from the data root")
-# Only read: the PNGs are written by the core through the loopback relay, and
-# `api: 1` forbids this addon writing outside its own directory. But reading
-# them from the wrong root is the quiet half of the same bug — the screen would
-# report "no bezel" for every system on the day the data moves, with nothing to
-# explain it.
-check("overlays dir under DATA", under(server.OVERLAYS_DIR, DATA), str(server.OVERLAYS_DIR))
-check("overlays dir NOT under PATH", not under(server.OVERLAYS_DIR, CODE),
-      str(server.OVERLAYS_DIR))
-check("overlays dir keeps its subpath",
-      server.OVERLAYS_DIR == DATA / "assets" / "overlays", str(server.OVERLAYS_DIR))
-
-print("Fallback for a box that has not taken the P3 OTA")
-# The systemd unit there passes GAMECORE_PATH only. Every path must resolve to
-# exactly where it did before — the split must cost nothing until P12 moves it.
+print("Fallback when only GAMECORE_PATH is set (a checkout)")
 del os.environ["GAMECORE_DATA"]
 importlib.reload(server)
 check("DATA falls back to PATH", server.GAMECORE_DATA == CODE, str(server.GAMECORE_DATA))
 check("systems.json back under PATH", under(server.SYSTEMS_FILE, CODE), str(server.SYSTEMS_FILE))
 legacy = server.roms_path_of({"romsPath": "emu/duckstation"})
 check("relative romsPath back under PATH", legacy == CODE / "emu" / "duckstation", str(legacy))
-check("overlays dir back under PATH", server.OVERLAYS_DIR == CODE / "assets" / "overlays",
-      str(server.OVERLAYS_DIR))
 
-# An empty GAMECORE_DATA must not resolve every path to "/" — `or` not `get`.
+# An empty GAMECORE_DATA must not resolve every path to the cwd: `or`, not `get`.
 os.environ["GAMECORE_DATA"] = ""
 importlib.reload(server)
 check("empty GAMECORE_DATA falls back too", server.GAMECORE_DATA == CODE, str(server.GAMECORE_DATA))
+
+print("Upload names NTFS accepts")
+# Only what Windows refuses changes: saves and playtime are keyed by the exact name.
+cases = {
+    "Zelda (USA) [!].z64": "Zelda (USA) [!].z64",
+    "Mario: Odyssey?.nsp": "Mario_ Odyssey_.nsp",
+    'a<b>c"d|e*f.iso': "a_b_c_d_e_f.iso",
+    "..\\..\\evil.zip": "evil.zip",
+    "../../evil.zip": "evil.zip",
+    "CON.zip": "_CON.zip",
+    "nul": "_nul",
+    "Console.zip": "Console.zip",
+    "game. ": "game",
+    "Pokémon Émeraude.gba": "Pokémon Émeraude.gba",
+    "": "unknown",
+}
+for raw, want in cases.items():
+    got = server.safe_filename(raw)
+    check(f"safe_filename({raw!r})", got == want, f"{got!r} != {want!r}")
 
 print("cover proxy")
 url = server.core_cover_url("gamecube", "Zelda #2: A/B?.iso")

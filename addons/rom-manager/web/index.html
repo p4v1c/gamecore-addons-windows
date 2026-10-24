@@ -43,29 +43,6 @@
 .bar-fill { height: 100%; width: 0; background: var(--accent-soft); transition: width .1s; }
 .bar-fill.ok { background: var(--ok); } .bar-fill.err { background: var(--danger); }
 
-.modal { position: fixed; inset: 0; z-index: 300; display: none; place-items: center; background: rgba(0, 0, 0, 0.7); padding: 16px; }
-.modal.open { display: grid; }
-.modal-box { width: min(620px, 100%); max-height: 90vh; overflow-y: auto; background: var(--surface);
-  border: 1px solid var(--line-strong); border-radius: 16px; }
-.modal-head { display: flex; align-items: center; gap: 12px; padding: 20px 24px; border-bottom: 1px solid var(--line); }
-.modal-title { font-size: 20px; font-weight: 700; flex: 1; }
-.modal-body { padding: 20px 24px; display: flex; flex-direction: column; gap: 12px; }
-.modal-foot { padding: 0 24px 20px; font-size: 14px; color: var(--ink-3); }
-.slot { display: flex; gap: 16px; padding: 16px; border: 1px solid var(--line); border-radius: var(--r-card); }
-.slot.empty { border-style: dashed; }
-.slot-thumb { flex: 0 0 144px; aspect-ratio: 16 / 9; border-radius: var(--r-control); background: var(--bg);
-  display: grid; place-items: center; overflow: hidden; color: var(--ink-3); font-size: 14px; }
-.slot-thumb img { width: 100%; height: 100%; object-fit: contain; }
-.slot-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
-.slot-name { font-size: 16px; font-weight: 700; }
-.slot-state { font-size: 14px; color: var(--ink-3); font-weight: 400; margin-left: 8px; }
-.slot-state.on { color: var(--ok); }
-.slot-meta { font-size: 14px; color: var(--ink-3); word-break: break-all; }
-.slot-meta .warn { color: var(--warn); }
-.slot-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.slot-msg { font-size: 14px; min-height: 1em; }
-.slot-msg.err { color: var(--danger); } .slot-msg.ok { color: var(--ok); }
-@media (max-width: 560px) { .slot { flex-direction: column; } .slot-thumb { flex-basis: auto; } }
 </style>
 </head>
 <body>
@@ -89,24 +66,12 @@
   </div>
 </div>
 
-<div class="modal" id="overlay-modal" role="dialog" aria-modal="true" aria-labelledby="om-title">
-  <div class="modal-box">
-    <div class="modal-head">
-      <span class="modal-title" id="om-title">Bezels</span>
-      <button class="btn icon-only" id="om-close" onclick="closeOverlayModal()" aria-label="Close"></button>
-    </div>
-    <div class="modal-body" id="om-slots"></div>
-    <div class="modal-foot" id="om-hint"></div>
-  </div>
-</div>
-
 <div class="toasts" id="toasts" role="status"></div>
 
 <script>
 // The ROM API is this addon's (relative URLs: the page lives under /roms/ behind
-// Caddy, or at / on the loopback port). System logos and bezel previews are core
-// assets on the same origin: Caddy routes root-absolute /assets/* to the core.
-// Bezel upload and delete go through this addon's /api/overlays passthrough.
+// Caddy, or at / on the loopback port). System logos are core assets on the same
+// origin: Caddy routes root-absolute /assets/* to the core.
 
 let emulators = [];
 let activeEmu = null;
@@ -163,7 +128,6 @@ function pageHead(count, size) {
         <div class="page-meta">${meta.join(', ')}</div>
       </div>
       <div class="page-actions">
-        <button class="btn" onclick="openOverlayModal()">${I('image','sm')}Bezels</button>
         <button class="btn primary" onclick="triggerFileInput()">${I('plus','sm')}${activeEmu.scanDirs ? 'Add a game folder' : 'Add games'}</button>
       </div>
     </header>`;
@@ -411,144 +375,7 @@ function escHtml(s) {
 // backslashes and quotes first, then HTML-escape.
 function escAttr(s) { return escHtml(String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'")); }
 
-// ── Bezels ──────────────────────────────────────────────────────────────────
-// One card per bezel slot: an emulator can run several machines (mGBA: Game Boy,
-// Color, Advance) and each may have its own frame. Empty slots are drawn too, so a
-// silent success and a silent failure look different. Everything goes through this
-// addon's /api/overlays passthrough; the core owns assets/overlays (api: 1).
-
-function openOverlayModal() {
-  if (!activeEmu) return;
-  $('om-title').textContent = `Bezels for ${activeEmu.platform}`;
-  $('overlay-modal').classList.add('open');
-  omLoadSlots();
-}
-
-function closeOverlayModal() { $('overlay-modal').classList.remove('open'); }
-
-async function omLoadSlots() {
-  const box = $('om-slots');
-  box.innerHTML = '<div class="empty">Reading</div>';
-  $('om-hint').textContent = '';
-  let slots, note = '';
-  try {
-    const res = await fetch(`api/overlays/${encodeURIComponent(activeEmu.id)}/slots`);
-    if (!res.ok) throw new Error(await omDetail(res));
-    const body = await res.json();
-    slots = body.slots || [];
-    note = body.note || '';
-  } catch (e) {
-    box.innerHTML = '';
-    $('om-hint').textContent = String(e.message || e);
-    return;
-  }
-  box.innerHTML = slots.map(omSlotCard).join('');
-  // Only when there is something to explain: a core older than per-console
-  // bezels shows one slot where another box shows four.
-  $('om-hint').textContent = note || (slots.length > 1
-    ? `${activeEmu.platform} runs ${slots.length - 1} consoles; each can have its own frame.` : '');
-}
-
-/** The core answers a refusal with a sentence; a generic "failed" wastes it. */
-async function omDetail(res) {
-  try { const body = await res.json(); if (body && body.detail) return body.detail; } catch {}
-  return `Request failed (${res.status})`;
-}
-
-function omSlotCard(s) {
-  const key = s.console || '';
-  const id = `om-slot-${key || 'system'}`;
-  const thumb = s.present
-    ? `<img src="/assets/overlays/${encodeURIComponent(s.filename)}?t=${Date.now()}" alt="">`
-    : 'No bezel';
-  const state = s.level === 'system'
-    ? `<span class="slot-state">Every ${escHtml(activeEmu.platform)} game</span>`
-    : `<span class="slot-state ${s.present ? 'on' : ''}">${s.present ? 'In place' : 'Not set'}</span>`;
-  // The measured hole, because the ratio is what a frame can be wrong about: a 1:1
-  // frame over a 3:2 console covers the game's edges. Compared here, at upload time.
-  const bad = s.present && ratioMismatch(s.ratio, s.expected_ratio);
-  const meta = s.present
-    ? `${escHtml(s.filename)}, hole ${s.hole.w}×${s.hole.h} (${escHtml(s.ratio)})`
-      + (s.expected_ratio
-         ? (bad ? ` <span class="warn">The ${escHtml(s.label)} draws ${escHtml(s.expected_ratio)}: this frame will cover part of the game.</span>`
-                : `, matches the machine`)
-         : '')
-    : `${escHtml(s.filename)}${s.expected_ratio ? `, the machine draws ${escHtml(s.expected_ratio)}` : ''}`;
-  const remove = s.present
-    ? `<button class="btn danger" onclick="${s.level === 'console' ? `omRemoveConsole('${escAttr(s.console)}')` : 'omRemoveSystem()'}">${I('trash','sm')}Remove</button>`
-    : '';
-  return `<div class="slot ${s.present ? '' : 'empty'}" id="${id}">
-    <div class="slot-thumb">${thumb}</div>
-    <div class="slot-main">
-      <div class="slot-name">${escHtml(s.label)}${state}</div>
-      <div class="slot-meta">${meta}</div>
-      <div class="slot-actions">
-        <label class="btn" ondragover="omDzOver(event,this)" ondragleave="omDzLeave(this)" ondrop="omDzDrop(event,this,'${escAttr(key)}')">
-          ${I('upload','sm')}${s.present ? 'Replace' : 'Add a PNG'}
-          <input type="file" accept="image/png,image/jpeg,image/webp" onchange="omFileInput(this,'${escAttr(key)}')">
-        </label>
-        ${remove}
-      </div>
-      <div class="slot-msg" id="${id}-msg"></div>
-    </div>
-  </div>`;
-}
-
-/** "809:540" vs "3:2": compare values, with the 1.5 % slack of a one-pixel rounding. */
-function ratioMismatch(measured, expected) {
-  if (!measured || !expected) return false;
-  const val = r => { const [w, h] = String(r).split(':').map(Number); return w > 0 && h > 0 ? w / h : NaN; };
-  const a = val(measured), b = val(expected);
-  if (!isFinite(a) || !isFinite(b)) return false;
-  return Math.abs(a / b - 1) > 0.015;
-}
-
-function omMsg(consoleId, text, kind) {
-  const el = $(`om-slot-${consoleId || 'system'}-msg`);
-  if (el) { el.textContent = text; el.className = `slot-msg ${kind || ''}`; }
-}
-function omDzOver(e, el) { e.preventDefault(); el.classList.add('hover'); }
-function omDzLeave(el) { el.classList.remove('hover'); }
-function omDzDrop(e, el, consoleId) {
-  e.preventDefault(); e.stopPropagation();
-  el.classList.remove('hover');
-  const file = e.dataTransfer.files[0];
-  if (file) omUpload(file, consoleId);
-}
-function omFileInput(input, consoleId) { const file = input.files[0]; if (file) omUpload(file, consoleId); input.value = ''; }
-
-async function omUpload(file, consoleId) {
-  omMsg(consoleId, 'Uploading', '');
-  const form = new FormData();
-  form.append('file', file);
-  const url = consoleId
-    ? `api/overlays/${encodeURIComponent(activeEmu.id)}/consoles/${encodeURIComponent(consoleId)}`
-    : `api/overlays/${encodeURIComponent(activeEmu.id)}`;
-  let res;
-  try { res = await fetch(url, { method: 'POST', body: form }); }
-  catch { omMsg(consoleId, "Couldn't reach the box.", 'err'); return; }
-  // A 422 says a bezel needs a transparent area for the game to show through.
-  if (!res.ok) { omMsg(consoleId, await omDetail(res), 'err'); return; }
-  omMsg(consoleId, 'Saved.', 'ok');
-  omLoadSlots();
-}
-
-async function omRemoveConsole(consoleId) {
-  if (!confirm('Remove this console’s bezel? Its games fall back to the system one.')) return;
-  const res = await fetch(`api/overlays/${encodeURIComponent(activeEmu.id)}/consoles/${encodeURIComponent(consoleId)}`, { method: 'DELETE' });
-  if (res.ok) omLoadSlots(); else omMsg(consoleId, await omDetail(res), 'err');
-}
-
-async function omRemoveSystem() {
-  if (!confirm('Remove the bezel for this system?')) return;
-  const res = await fetch(`api/overlays/${encodeURIComponent(activeEmu.id)}`, { method: 'DELETE' });
-  if (res.ok) omLoadSlots(); else omMsg('', await omDetail(res), 'err');
-}
-
 $('drag-icon').innerHTML = I('upload');
-$('om-close').innerHTML = I('close', 'sm');
-$('overlay-modal').addEventListener('click', e => { if (e.target === $('overlay-modal')) closeOverlayModal(); });
-document.addEventListener('keydown', e => { if (e.key === 'Escape') closeOverlayModal(); });
 
 // Open straight on a system: the one in the URL, else the first with games.
 loadEmulators().then(() => {
