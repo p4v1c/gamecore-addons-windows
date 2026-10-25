@@ -1,0 +1,18 @@
+{
+  "api": 1,
+  "name": "rpcs3-manager",
+  "label": "RPCS3",
+  "description": "Configure PS3 games remotely \u2014 per-game config & patches, RPCS3-style",
+  "version": "2.0.0",
+  "type": "web",
+  "default": false,
+  "service": "user",
+  "port": 8771,
+  "offline_assets": [
+    "wheels"
+  ],
+  "path": "/rpcs3",
+  "shared": [
+    "py/sfo.py"
+  ]
+}

@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GameCore games</title>
+<link rel="stylesheet" href="gamecore-ui.css">
+<link rel="stylesheet" href="gamecore-nav.css">
+<script src="gamecore-icons.js"></script>
+<script src="gamecore-nav.js" defer></script>
+<style>
+.rail-logo { width: 28px; height: 28px; object-fit: contain; flex-shrink: 0; }
+
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 20px 16px; }
+.card { position: relative; display: flex; flex-direction: column; gap: 8px; }
+/* Boxes differ by console (N64 landscape, DS square, Wii tall): each is shown whole
+   at its own ratio, never cropped to one. */
+.grid { align-items: start; }
+.card-art img { display: block; width: 100%; border-radius: 6px; border: 1px solid var(--line); }
+.card-art .ext { aspect-ratio: 3 / 4; display: grid; place-items: center; border-radius: var(--r-card);
+  background: var(--raised); border: 1px solid var(--line); font-size: 20px; font-weight: 700; color: var(--ink-3); }
+.card-name { font-size: 15px; font-weight: 600; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical; overflow: hidden; }
+.card-meta { font-size: 14px; color: var(--ink-3); }
+.card-del { position: absolute; top: 8px; right: 8px; opacity: 0; background: rgba(9, 9, 15, 0.85); }
+.card:hover .card-del, .card-del:focus-visible { opacity: 1; }
+@media (hover: none) { .card-del { opacity: 1; } }
+
+.drag-overlay { position: fixed; inset: 0; z-index: 100; display: none; place-items: center;
+  background: rgba(9, 9, 15, 0.94); pointer-events: none; }
+.drag-overlay.visible { display: grid; }
+.drag-box { width: min(440px, 90vw); padding: 48px 32px; border: 2px dashed var(--accent-soft);
+  border-radius: 20px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.drag-box .icon { width: 40px; height: 40px; color: var(--accent-soft); }
+.drag-title { font-size: 20px; font-weight: 700; }
+.drag-sub { font-size: 16px; color: var(--ink-2); }
+
+.toast-row { display: flex; gap: 12px; align-items: baseline; }
+.toast-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.toast-state { font-size: 14px; color: var(--ink-3); }
+.toast-state.ok { color: var(--ok); } .toast-state.err { color: var(--danger); }
+.bar { height: 4px; border-radius: 2px; background: var(--hover); margin-top: 8px; overflow: hidden; }
+.bar-fill { height: 100%; width: 0; background: var(--accent-soft); transition: width .1s; }
+.bar-fill.ok { background: var(--ok); } .bar-fill.err { background: var(--danger); }
+
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="rail">
+    <div class="rail-head">
+      <div class="rail-title">Games</div>
+      <div class="rail-sub" id="rail-sub">Loading</div>
+    </div>
+    <nav class="rail-list" id="emu-list" aria-label="Systems"><div class="spinner"></div></nav>
+  </aside>
+  <main class="page" id="page"><div class="spinner"></div></main>
+</div>
+<input type="file" id="file-input" multiple hidden onchange="handleFileInput(this)">
+
+<div class="drag-overlay" id="drag-overlay">
+  <div class="drag-box">
+    <span id="drag-icon"></span>
+    <div class="drag-title">Drop to add games</div>
+    <div class="drag-sub" id="drag-sub">Pick a system first</div>
+  </div>
+</div>
+
+<div class="toasts" id="toasts" role="status"></div>
+
+<script>
+// The ROM API is this addon's (relative URLs: the page lives under /roms/ behind
+// Caddy, or at / on the loopback port). System logos are core assets on the same
+// origin: Caddy routes root-absolute /assets/* to the core.
+
+let emulators = [];
+let activeEmu = null;
+let dragDepth = 0;
+const $ = id => document.getElementById(id);
+const I = (n, c) => gcIcon(n, c);
+const plural = (n, one, many) => `${n} ${n === 1 ? one : (many || one + 's')}`;
+
+async function loadEmulators() {
+  try {
+    const res = await fetch('api/emulators');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    emulators = await res.json();
+  } catch (e) {
+    $('emu-list').innerHTML = `<div class="empty error">Couldn't list the systems: ${escHtml(e.message)}</div>`;
+    return;
+  }
+  renderRail();
+}
+
+function renderRail() {
+  const total = emulators.reduce((s, e) => s + e.romCount, 0);
+  $('rail-sub').textContent = `${plural(total, 'game')} on ${plural(emulators.length, 'system')}`;
+  $('emu-list').innerHTML = emulators.map(e => `
+    <button class="rail-item" id="emu-${e.id}" onclick="selectEmulator('${e.id}')"
+            ${activeEmu && activeEmu.id === e.id ? 'aria-current="true"' : ''}>
+      <img class="rail-logo" src="/${e.iconPath}" alt="" onerror="this.remove()">
+      <span class="rail-name">${escHtml(e.platform)}</span>
+      <span class="rail-count" id="badge-${e.id}">${e.romCount}</span>
+    </button>`).join('');
+}
+
+async function selectEmulator(id) {
+  activeEmu = emulators.find(e => e.id === id);
+  if (!activeEmu) return;
+  document.querySelectorAll('.rail-item').forEach(el => el.removeAttribute('aria-current'));
+  $(`emu-${id}`)?.setAttribute('aria-current', 'true');
+  history.replaceState(null, '', `?system=${encodeURIComponent(id)}`);
+  // Folder-based systems (PS3 disc games) upload whole game folders.
+  $('file-input').webkitdirectory = !!activeEmu.scanDirs;
+  $('drag-sub').textContent = activeEmu.scanDirs
+    ? `A game folder for ${activeEmu.platform}`
+    : `Files for ${activeEmu.platform}: ${(activeEmu.extensions || []).join(' ')}`;
+  await loadRoms(id);
+}
+
+function pageHead(count, size) {
+  const meta = [plural(count, 'game')];
+  if (size) meta.push(size);
+  return `
+    <header class="page-head">
+      <div>
+        <h1 class="page-title">${escHtml(activeEmu.platform)}</h1>
+        <div class="page-meta">${meta.join(', ')}</div>
+      </div>
+      <div class="page-actions">
+        <button class="btn primary" onclick="triggerFileInput()">${I('plus','sm')}${activeEmu.scanDirs ? 'Add a game folder' : 'Add games'}</button>
+      </div>
+    </header>`;
+}
+
+async function loadRoms(emuId) {
+  $('page').innerHTML = '<div class="spinner"></div>';
+  let roms;
+  try {
+    const res = await fetch(`api/roms/${emuId}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    roms = await res.json();
+  } catch (e) {
+    $('page').innerHTML = `<div class="page-body"><div class="empty error">Couldn't read the games: ${escHtml(e.message)}</div></div>`;
+    return;
+  }
+  const badge = $(`badge-${emuId}`);
+  if (badge) badge.textContent = roms.length;
+  const body = roms.length
+    ? `<div class="grid">${roms.map(r => cardHTML(emuId, r)).join('')}</div>`
+    : `<div class="empty">No game here yet. Drop ${activeEmu.scanDirs ? 'a game folder' : 'files'} anywhere on this page, or use ${activeEmu.scanDirs ? 'Add a game folder' : 'Add games'}.</div>`;
+  $('page').innerHTML = `${pageHead(roms.length, activeEmu.totalSize)}
+    <div class="page-body"><section class="section">${body}</section>
+      <section class="section">${dropZoneHTML()}</section></div>`;
+}
+
+function cardHTML(emuId, rom) {
+  // The core finds or fetches the cover; a game it has none for falls back to its extension.
+  const art = `<img src="api/roms/${emuId}/cover?name=${encodeURIComponent(rom.name)}" alt="" loading="lazy"
+           onerror="this.outerHTML='<span class=&quot;ext&quot;>${escHtml(rom.ext)}</span>'">`;
+  return `
+    <div class="card">
+      <div class="card-art">${art}</div>
+      <div class="card-name" title="${escHtml(rom.name)}">${escHtml(rom.displayName || rom.name)}</div>
+      <div class="card-meta">${escHtml(rom.ext)}, ${rom.sizeHuman}</div>
+      <button class="btn danger icon-only card-del" title="Delete" aria-label="Delete ${escHtml(rom.displayName || rom.name)}"
+              onclick="deleteRom('${emuId}','${escAttr(rom.name)}',this)">${I('trash','sm')}</button>
+    </div>`;
+}
+
+function dropZoneHTML() {
+  const dirs = !!activeEmu.scanDirs;
+  const exts = dirs ? 'Game folders' : (activeEmu.extensions || []).join(' ');
+  return `
+    <label class="drop" id="drop-zone-inner" ondragover="dzOver(event,this)" ondragleave="dzLeave(this)" ondrop="dzDrop(event)">
+      ${I('upload')}
+      <span><b>Add ${dirs ? 'a game folder' : 'games'}</b>Drop ${dirs ? 'a folder' : 'files'} here or click to browse. ${escHtml(exts)}</span>
+      <input type="file" multiple ${dirs ? 'webkitdirectory' : ''} onchange="handleFileInput(this)">
+    </label>`;
+}
+
+async function deleteRom(emuId, filename, btn) {
+  if (!confirm(`Delete "${filename}" from the box?`)) return;
+  btn.disabled = true;
+  const res = await fetch(`api/roms/${emuId}/${encodeURIComponent(filename)}`, {method: 'DELETE'});
+  if (res.ok) {
+    btn.closest('.card').remove();
+    const badge = $(`badge-${emuId}`);
+    if (badge) badge.textContent = Math.max(0, parseInt(badge.textContent) - 1);
+    if (!document.querySelector('.grid .card')) await loadRoms(emuId);
+  } else {
+    btn.disabled = false;
+    toast(`Couldn't delete "${filename}".`, true);
+  }
+}
+
+function triggerFileInput() {
+  if (!activeEmu) { toast('Pick a system first.', true); return; }
+  $('file-input').click();
+}
+
+function handleFileInput(input) {
+  if (!activeEmu) { toast('Pick a system first.', true); return; }
+  uploadFiles(Array.from(input.files));
+  input.value = '';
+}
+
+function toast(msg, err) {
+  const el = document.createElement('div');
+  el.className = 'toast' + (err ? ' error' : '');
+  el.textContent = msg;
+  $('toasts').appendChild(el);
+  setTimeout(() => el.remove(), err ? 6000 : 3500);
+}
+
+function progressToast(name) {
+  const el = document.createElement('div');
+  el.className = 'toast';
+  el.innerHTML = `<div class="toast-row"><span class="toast-name" title="${escHtml(name)}">${escHtml(name)}</span>
+    <span class="toast-state">0%</span></div><div class="bar"><div class="bar-fill"></div></div>`;
+  $('toasts').appendChild(el);
+  const state = el.querySelector('.toast-state'), fill = el.querySelector('.bar-fill');
+  return {
+    progress(pct, text) { fill.style.width = pct + '%'; state.textContent = text || pct + '%'; },
+    done() { fill.style.width = '100%'; fill.classList.add('ok'); state.className = 'toast-state ok'; state.textContent = 'Done'; setTimeout(() => el.remove(), 3000); },
+    fail(text) { fill.classList.add('err'); state.className = 'toast-state err'; state.textContent = text; setTimeout(() => el.remove(), 8000); },
+  };
+}
+
+function uploadFiles(files) {
+  if (!activeEmu || !files.length) return;
+  if (activeEmu.scanDirs) {
+    // Folder-based system: files come from the directory picker, which stamps
+    // webkitRelativePath ("Game/PS3_GAME/…"). Group them per game.
+    const entries = files.filter(f => f.webkitRelativePath).map(f => ({ file: f, relpath: f.webkitRelativePath }));
+    if (!entries.length) { toast(`${activeEmu.platform} games are folders: drop the whole game folder.`, true); return; }
+    for (const [game, batch] of groupByTopDir(entries)) uploadFolder(game, batch, activeEmu.id);
+    return;
+  }
+  files.forEach(f => uploadOne(f, activeEmu.id));
+}
+
+function groupByTopDir(entries) {
+  const games = new Map();
+  for (const e of entries) {
+    const top = e.relpath.split('/')[0];
+    if (!games.has(top)) games.set(top, []);
+    games.get(top).push(e);
+  }
+  return games;
+}
+
+function uploadOne(file, emuId) {
+  const t = progressToast(file.name);
+  const xhr = new XMLHttpRequest();
+  const form = new FormData();
+  form.append('file', file);
+  xhr.upload.onprogress = e => { if (e.lengthComputable) t.progress(Math.round(e.loaded / e.total * 100)); };
+  xhr.onload = () => {
+    if (xhr.status === 200) { t.done(); if (activeEmu && activeEmu.id === emuId) loadRoms(emuId); }
+    else t.fail('Failed');
+  };
+  xhr.onerror = () => t.fail('Network error');
+  xhr.open('POST', `api/roms/${emuId}/upload`);
+  xhr.send(form);
+}
+
+function dzOver(e, el) { e.preventDefault(); el.classList.add('hover'); }
+function dzLeave(el) { el.classList.remove('hover'); }
+function dzDrop(e) { e.preventDefault(); $('drop-zone-inner')?.classList.remove('hover'); handleDrop(e); }
+
+// Folder drops (PS3-style disc games). webkitGetAsEntry() only works inside the
+// drop event itself, so the entries are grabbed here and walked afterwards.
+function handleDrop(e) {
+  if (!activeEmu) { toast('Pick a system first.', true); return; }
+  if (!activeEmu.scanDirs) { uploadFiles(Array.from(e.dataTransfer.files)); return; }
+  const entries = Array.from(e.dataTransfer.items || []).map(i => i.webkitGetAsEntry && i.webkitGetAsEntry()).filter(Boolean);
+  const dirs = entries.filter(en => en.isDirectory);
+  if (!dirs.length) { toast(`${activeEmu.platform} games are folders: drop the whole game folder.`, true); return; }
+  dirs.forEach(dir => uploadDroppedDir(dir, activeEmu.id));
+}
+
+async function uploadDroppedDir(dirEntry, emuId) {
+  const collected = [];
+  try { await collectDirEntry(dirEntry, dirEntry.name, collected); }
+  catch (err) { toast(`Couldn't read "${dirEntry.name}": ${err.message || err}`, true); return; }
+  if (!collected.length) { toast(`"${dirEntry.name}" is empty.`, true); return; }
+  uploadFolder(dirEntry.name, collected, emuId);
+}
+
+function readAllEntries(reader) {
+  // readEntries returns at most ~100 entries per call: drain it.
+  return new Promise((resolve, reject) => {
+    const all = [];
+    (function next() {
+      reader.readEntries(batch => { if (!batch.length) return resolve(all); all.push(...batch); next(); }, reject);
+    })();
+  });
+}
+
+async function collectDirEntry(entry, path, out) {
+  if (entry.isFile) {
+    const file = await new Promise((res, rej) => entry.file(res, rej));
+    out.push({ file, relpath: path });
+  } else if (entry.isDirectory) {
+    const children = await readAllEntries(entry.createReader());
+    for (const c of children) await collectDirEntry(c, path + '/' + c.name, out);
+  }
+}
+
+// One toast per game folder, progress summed over its files.
+async function uploadFolder(gameName, entries, emuId) {
+  const t = progressToast(gameName);
+  const total = entries.reduce((s, x) => s + x.file.size, 0);
+  let doneBytes = 0;
+  for (let i = 0; i < entries.length; i++) {
+    const { file, relpath } = entries[i];
+    try {
+      await uploadEntry(file, relpath, emuId, i === entries.length - 1, loaded => {
+        const pct = total ? Math.min(100, Math.round((doneBytes + loaded) / total * 100)) : 0;
+        t.progress(pct, `${pct}%, file ${i + 1} of ${entries.length}`);
+      });
+    } catch (err) {
+      t.fail(`Failed: ${String(err.message || err).slice(0, 60)}`);
+      return;
+    }
+    doneBytes += file.size;
+  }
+  t.done();
+  if (activeEmu && activeEmu.id === emuId) loadRoms(emuId);
+}
+
+function uploadEntry(file, relpath, emuId, isLast, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    const form = new FormData();
+    form.append('file', file);
+    form.append('relpath', relpath);
+    form.append('last', isLast ? '1' : '0');
+    xhr.upload.onprogress = e => { if (e.lengthComputable) onProgress(e.loaded); };
+    xhr.onload = () => {
+      if (xhr.status === 200) return resolve();
+      let msg = `HTTP ${xhr.status}`;
+      try { msg = JSON.parse(xhr.responseText).detail || msg; } catch {}
+      reject(new Error(msg));
+    };
+    xhr.onerror = () => reject(new Error('network error'));
+    xhr.open('POST', `api/roms/${emuId}/upload-entry`);
+    xhr.send(form);
+  });
+}
+
+document.addEventListener('dragenter', e => {
+  if (!e.dataTransfer.types.includes('Files')) return;
+  dragDepth++;
+  $('drag-overlay').classList.add('visible');
+});
+document.addEventListener('dragleave', () => {
+  dragDepth--;
+  if (dragDepth <= 0) { dragDepth = 0; $('drag-overlay').classList.remove('visible'); }
+});
+document.addEventListener('dragover', e => e.preventDefault());
+document.addEventListener('drop', e => {
+  e.preventDefault();
+  dragDepth = 0;
+  $('drag-overlay').classList.remove('visible');
+  const hasFiles = e.dataTransfer.files.length || Array.from(e.dataTransfer.items || []).some(i => i.kind === 'file');
+  if (hasFiles) handleDrop(e);
+});
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+// Values inside single-quoted JS strings in inline handlers: JS-escape
+// backslashes and quotes first, then HTML-escape.
+function escAttr(s) { return escHtml(String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'")); }
+
+$('drag-icon').innerHTML = I('upload');
+
+// Open straight on a system: the one in the URL, else the first with games.
+loadEmulators().then(() => {
+  const q = new URLSearchParams(location.search).get('system');
+  const first = emulators.find(e => e.id === q) || emulators.find(e => e.romCount) || emulators[0];
+  if (first) selectEmulator(first.id);
+  else $('page').innerHTML = '<div class="page-body"><div class="empty">No system on this box yet.</div></div>';
+});
+</script>
+</body>
+</html>

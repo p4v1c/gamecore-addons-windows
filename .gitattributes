@@ -1,0 +1,12 @@
+# LF everywhere, whatever core.autocrlf says on the machine that checks out:
+# the hooks and the web files are served or run as they are in the repo.
+* text=auto eol=lf
+
+# cmd.exe misparses labels and line continuations in LF batch files.
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+*.png   binary
+*.jpg   binary
+*.woff2 binary
+*.zip   binary
