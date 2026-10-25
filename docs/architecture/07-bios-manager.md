@@ -32,14 +32,17 @@ flowchart LR
 ## Where a file goes
 
 - **The core owns the directory when a pack declares a `bios` block.** It has
-  expanded `@FLATPAK_CONFIG@` for the Flatpak installed, and its launch gate
+  expanded the pack's tokens for the install it made, and its launch gate
   checks the same path. Re-deriving it in the addon would be a second answer
   that drifts. When the core does not answer, those files are not placed.
 - **The addon owns the rest**, as facts about the emulator: melonDS's
   configured paths (`[DS]` / `[DSi]` in `melonDS.toml`, read with `tomllib`,
   never written), Dolphin's `GC/<region>/IPL.bin`, mGBA's
-  `<config>/gba_bios.bin` fallback. Flatpak or native follows
-  `systems.json` `path`.
+  `<config>/gba_bios.bin` fallback. The folder is the emulator's in
+  `%APPDATA%` (Dolphin: or Documents before 2024), or the one by its exe
+  when `systems.json` names it and a portable marker is there
+  (`portable.txt` → `User\` for Dolphin, `portable.ini` for mGBA, a
+  `melonDS.toml` by `melonDS.exe`).
 - **Names come from the table or the rules, never from the upload**, except
   for DuckStation and PCSX2 BIOS files, which keep their bare file name: both
   emulators list their folder.
@@ -50,7 +53,9 @@ Ryujinx's firmware is `bis/system/Contents/registered/<id>.nca/00`, written by
 Ryujinx after it checks the NCAs against the keys; RPCS3 decrypts the PUP into
 `dev_flash`. Copying files would fake an install the emulator never verified.
 Both have a CLI (`--install-firmware`, `--installfw`), but both open a window,
-so the addon shows the command instead of running it on the TV.
+so the addon shows the command instead of running it on the TV: a
+PowerShell call of the exe `systems.json` declares
+(`& "...\Ryujinx.exe" --install-firmware "<folder>"`), or its bare name.
 
 ## Traps
 
@@ -64,7 +69,7 @@ so the addon shows the command instead of running it on the TV.
   emulator configs.
 - **The DSi NAND is a save container.** `place.NEVER_REPLACE` keeps an
   existing one, whatever the upload.
-- **`/tmp` is RAM on the box.** Multipart spill files and the work directory
-  live under `$ADDON_DATA_DIR/tmp`.
+- **Large uploads stay on the data volume.** Multipart spill files and the
+  work directory live under `$ADDON_DATA_DIR/tmp`, not in `%TEMP%`.
 - **Azahar 2125 reads no `aes_keys.txt`**: one uploaded is reported as
   ignored with that reason.

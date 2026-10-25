@@ -51,7 +51,7 @@ anything not recognised are listed as ignored, with the reason.
 | 3DS, Wii, PSP, N64 | Azahar, Dolphin, PPSSPP, gopher64 | nothing needed | addon |
 
 The core's `/api/bios` is used for every system whose catalogue pack declares
-a `bios` block: the core has already resolved the Flatpak directory, and it is
+a `bios` block: the core has already resolved the emulator's directory, and it is
 what the launch gate checks. When the core does not answer, those files are
 reported as not placed rather than guessed.
 
@@ -60,14 +60,13 @@ A file goes only to a system installed on the box (`config/systems.json`).
 ## What needs the emulator
 
 A copy is not an install for these, so the addon stages the file under
-`$ADDON_DATA_DIR/firmware/<system>/` (visible to the Flatpaks through
-`/userdata`) and shows the step:
+`$ADDON_DATA_DIR\firmware\<system>\` and shows the step:
 
 - **Switch firmware**: Ryujinx, *Actions, Install Firmware, Install a firmware
   from a directory*, or with Ryujinx closed
-  `flatpak run io.github.ryubing.Ryujinx --install-firmware "<folder>"`.
+  `& "<Ryujinx folder>\Ryujinx.exe" --install-firmware "<folder>"` in PowerShell.
 - **PS3 firmware**: RPCS3, *File, Install Firmware*, or
-  `flatpak run net.rpcs3.RPCS3 --installfw "<PUP>"` (needs RPCS3's window).
+  `& "<RPCS3 folder>\rpcs3.exe" --installfw "<PUP>"` (needs RPCS3's window).
 - **melonDS** without a configured path: set it in *Config, Emu settings*.
 
 The addon does not run either emulator itself: both open a window, and doing

@@ -1,19 +1,23 @@
 # 4 — rpcs3-manager (:8771, `/rpcs3`)
 
 Configure PS3 games remotely, in RPCS3's own vocabulary: per-game config,
-patches, and `.pkg` installation. `server.py` 726 l., plus `ryaml.py` (50) and
-`schema.py` (96).
+patches, and `.pkg` installation. `server.py`, plus `ryaml.py` and `schema.py`.
 
 ## Finding RPCS3
 
-The box may run RPCS3 as a Flatpak or a native build, and the addon must edit
-the config of **the install the box actually launches**.
+RPCS3 for Windows is portable: one folder holds `rpcs3.exe`, `dev_hdd0\` and
+`patches\`, and its YAML files (`config.yml`, `games.yml`, `custom_configs\`,
+`patch_config.yml`) sit in `config\` on recent builds, next to the exe on
+older ones. The addon must edit **the install the box actually launches**.
 
 | Function | Role |
 |---|---|
-| `_declared_path()` | the `path` of the `rpcs3` entry in the box's `systems.json` |
-| `config_dir()` | env override, then the directory implied by that declared install |
-| `rpcs3_cmd(extra_env)` | argv that launches the configured RPCS3, or `None` |
+| `_declared_path()` | the `path` of the `rpcs3` entry in the player's `systems.json` (`GAMECORE_DATA`) |
+| `find_rpcs3()` | `RPCS3_DIR`, else the folder of that exe (relative = under `GAMECORE_DATA`); `None` when neither |
+| `rpcs3_dir()` | that folder, or a 503 `NOT_INSTALLED` ("RPCS3 is not installed on this PC") |
+| `config_dir()` | `config\` when it holds `config.yml` or `games.yml`, else the exe's folder |
+| `rpcs3_cmd()` | `RPCS3_BIN`, else `rpcs3.exe` in that folder, or `None` |
+| `read_text(path)` / `write_text(path, text)` | UTF-8, and **LF** on write: Windows newline translation would rewrite every line of RPCS3's files |
 | `backup(path)` | timestamped `.bak` before touching an existing file |
 | `yload(path)` | read a YAML file through `ryaml` |
 
@@ -77,9 +81,10 @@ directory. `_get_path(tree, segments)` / `_set_path(tree, segments, value)`
 walk the nested tree; `_schema_values(tree)` projects it onto the schema for
 the UI.
 
-> Per-game configs live under RPCS3's own config directory — the same one the
-> emulator reads at launch. Which directory that is depends on
-> Flatpak-vs-native, hence `config_dir()`.
+> Per-game configs live under RPCS3's own config directory, the same one the
+> emulator reads at launch: `config\` or the exe's folder depending on the
+> build, hence `config_dir()`. `dev_hdd0\` and `patches\` are always by the exe
+> (`rpcs3_dir()`).
 
 ### Patches
 
@@ -101,12 +106,13 @@ the UI.
 
 ### `.pkg` installation
 
-Updates and DLC ship as `.pkg` files, and RPCS3 installs them through its GUI.
-The addon drives that headlessly:
+Updates and DLC ship as `.pkg` files, and RPCS3 installs them only with its
+window open (`--installpkg` refuses `--no-gui`). The addon's task runs in the
+console user's session, so the window opens on the TV with nothing to
+discover:
 
 | Function | Role |
 |---|---|
-| `_discover_display()` | env (`DISPLAY` + `XAUTHORITY`) for the box's active X session |
 | `_hdd_snapshot()` | listing of `dev_hdd0/game` before the install |
 | `_watch_install(proc, dest, before)` | detects the install landing, then closes RPCS3 |
 | `_finish_job(proc, dest, before)` | job completion bookkeeping |

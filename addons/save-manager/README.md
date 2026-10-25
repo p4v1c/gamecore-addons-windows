@@ -64,24 +64,25 @@ as before.
 
 ## Where each emulator keeps its saves
 
-On the box (as configured by the GameCore installer — first existing path wins):
+On the box (Windows; the folder holding the most saves wins, a portable
+install by the exe `systems.json` declares first — `catalog.PORTABLE`):
 
 | System | Emulator | Native saves | Save states |
 |---|---|---|---|
 | GB / GBC / GBA | mGBA | `emu/<gb|gbc|gba>/<rom>.sav` (next to the ROM); `emu/mgba/` on a box not yet split | `<rom>.ss0`–`.ss9` |
 | DS | melonDS | `emu/melonds/<rom>.sav`; players 2-4 of local multiplayer `<rom>.sav.2`–`.sav.4` | `<rom>.ml1`–`.ml8`, `.mln` |
-| N64 | gopher64 | `…/gopher64/saves/<name>-<sha256>.{eep,sra,fla,mpk}` | `…/gopher64/states/` |
-| PS1 | DuckStation | `~/.local/share/duckstation/memcards/*.mcd` (1 card per game by default) | `savestates/<serial>_<slot>.sav` |
-| PS2 | PCSX2 | `~/.config/PCSX2/memcards/Mcd001.ps2` (shared card) | `sstates/*.p2s` |
-| GC/Wii | Dolphin | `…/dolphin-emu/GC/**.gci` + `.raw` cards; `Wii/title/<hi>/<lo>/data/` | `StateSaves/<gameid>.sNN` |
-| PS3 | RPCS3 | `~/.config/rpcs3/dev_hdd0/home/00000001/savedata/<SERIAL-…>/` + `trophy/` | `savestates/` |
-| PSP | PPSSPP | `…/ppsspp/PSP/SAVEDATA/<GAMEID…>/` | `PSP/PPSSPP_STATE/` |
-| Wii U | Cemu | `…/Cemu/mlc01/usr/save/00050000/<tid-lo>/` | — (none in Cemu) |
-| 3DS | Azahar | `…/azahar-emu/sdmc/Nintendo 3DS/<id0>/<id1>/title/00040000/<tid-lo>/data/00000001/` (+ `extdata`) | `states/<tid>.<slot>.cst` |
-| Switch | Ryujinx (`switch`) | `…/Ryujinx/bis/user/save/<install-specific id>/{0,1}/` | — |
-| Switch | Eden (`eden`, read only) | `…/eden/nand/user/save/0000000000000000/<user>/<titleid>/` (device saves: user `000…0`) | — |
-| X360 | Xenia Canary | `lib/xenia/content/<XUID>/<TitleID>/00000001/` (+ `Headers/`) | — |
-| PS4 | shadPS4 | `…/shadPS4/home/1/savedata/<CUSA…>/` (≤0.15: `savedata/1/<CUSA…>/`) | — |
+| N64 | gopher64 | `%APPDATA%\gopher64\saves\<name>-<sha256>.{eep,sra,fla,mpk}` | `…\gopher64\states\` |
+| PS1 | DuckStation | `Documents\DuckStation\memcards\*.mcd` (or `%LOCALAPPDATA%\DuckStation`; 1 card per game by default) | `savestates\<serial>_<slot>.sav` |
+| PS2 | PCSX2 | `Documents\PCSX2\memcards\Mcd001.ps2` (shared card) | `sstates\*.p2s` |
+| GC/Wii | Dolphin | `%APPDATA%\Dolphin Emulator\GC\**.gci` + `.raw` cards (Documents before 2024); `Wii\title\<hi>\<lo>\data\` | `StateSaves\<gameid>.sNN` |
+| PS3 | RPCS3 | `<RPCS3 folder>\dev_hdd0\home\00000001\savedata\<SERIAL-…>\` + `trophy\` | `savestates\` |
+| PSP | PPSSPP | `Documents\PPSSPP\PSP\SAVEDATA\<GAMEID…>\` | `PSP\PPSSPP_STATE\` |
+| Wii U | Cemu | `%APPDATA%\Cemu\mlc01\usr\save\00050000\<tid-lo>\` | — (none in Cemu) |
+| 3DS | Azahar | `%APPDATA%\Azahar\sdmc\Nintendo 3DS\<id0>\<id1>\title\00040000\<tid-lo>\data\00000001\` (+ `extdata`) | `states\<tid>.<slot>.cst` |
+| Switch | Ryujinx (`switch`) | `%APPDATA%\Ryujinx\bis\user\save\<install-specific id>\{0,1}\` | — |
+| Switch | Eden (`eden`, read only) | `%APPDATA%\eden\nand\user\save\0000000000000000\<user>\<titleid>\` (device saves: user `000…0`) | — |
+| X360 | Xenia Canary | `<Xenia folder>\content\<XUID>\<TitleID>\00000001\` (+ `Headers\`) | — |
+| PS4 | shadPS4 | `%APPDATA%\shadPS4\home\1\savedata\<CUSA…>\` (≤0.15: `savedata\1\<CUSA…>\`) | — |
 
 The in-UI guide ("Transfer saves from a PC") documents the same locations for
 desktop installs (Windows `Documents\…`/`%AppData%\…`, portable modes, Linux),

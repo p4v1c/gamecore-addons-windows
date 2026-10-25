@@ -1,7 +1,9 @@
 # 3 — rom-manager (:8770, `/roms`)
 
-Upload ROMs from any browser on the LAN, and upload bezel overlays.
-`server.py`, 315 lines. The simplest of the three — read it first.
+Upload ROMs from any browser on the LAN. `server.py` is the simplest of the
+four: read it first. The Linux addon also managed bezels through the core's
+`/api/overlays`; the Windows edition has no overlay window, so that screen and
+its relay are gone.
 
 ## Routes
 
@@ -13,8 +15,7 @@ Upload ROMs from any browser on the LAN, and upload bezel overlays.
 | `POST /api/roms/{system_id}/upload` | `upload_rom(system_id, file)` | one file |
 | `POST /api/roms/{system_id}/upload-entry` | `upload_folder_entry(system_id, file, relpath, last)` | one entry of a folder-based game |
 | `DELETE /api/roms/{system_id}/{filename}` | `delete_rom(system_id, filename)` | file or folder |
-| `POST /api/overlays/{system_id}` | `upload_overlay(system_id, request)` | forwarded to the core |
-| `DELETE /api/overlays/{system_id}` | `delete_overlay(system_id)` | |
+| `GET /api/roms/{system_id}/cover` | `rom_cover(system_id, name)` | the core's cover, relayed over loopback |
 
 ## Reading the core's configuration
 
@@ -64,7 +65,7 @@ Two sanitizers, doing different jobs:
 
 | Function | Job |
 |---|---|
-| `safe_filename(filename)` | strips **only** truly dangerous characters (`/`, NUL) — game names legitimately contain spaces, brackets, apostrophes, unicode, and mangling them breaks cover lookup |
+| `safe_filename(filename)` | replaces **only** what NTFS refuses (`< > : " / \ \| ? *`, control characters) with `_`, prefixes a reserved device name (`CON`, `NUL`, `COM1`…) with `_` and drops trailing dots and spaces — game names legitimately contain spaces, brackets, apostrophes, unicode, and mangling them breaks cover and save lookup |
 | `safe_relpath(relpath)` | sanitizes a client-supplied path **inside** a game folder: rejects absolute and `..`, keeps the structure `PS3_GAME/USRDIR/EBOOT.BIN` |
 
 `safe_relpath` is the security-critical one — it is the only thing standing
@@ -81,9 +82,3 @@ CORE_NOTIFY = f"http://127.0.0.1:{CORE_PORT}/api/addons/notify"
 WebSocket and the TV refreshes its library. It is **best effort** — its
 docstring says so: an unreachable core must never fail an upload that already
 landed on disk.
-
-## Overlays
-
-The addon proxies overlay upload/delete to the core (`CORE_OVERLAYS`) rather
-than writing `assets/overlays/` itself, so the core's magic-byte check
-(`_looks_like_image`) stays the single gate on what becomes an overlay PNG.

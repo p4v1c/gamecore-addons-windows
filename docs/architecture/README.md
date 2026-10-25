@@ -8,15 +8,16 @@ matters is listed with what it does, and the flows are drawn.
 - `../CREATING_AN_ADDON.md` — the tutorial: copy the template, ship an addon.
 - **This directory** — how the machinery works and why.
 
-Companion repo: [p4v1c/GamecoreRenew](https://github.com/p4v1c/GamecoreRenew)
-("the core"). Its `docs/architecture/` covers the other half of the system.
+Companion repo: [p4v1c/GamecoreWindows](https://github.com/p4v1c/GamecoreWindows)
+("the core"). This repo is the Windows port of
+[p4v1c/gamecore-addons](https://github.com/p4v1c/gamecore-addons). Its `docs/architecture/` covers the other half of the system.
 
 ## Read in this order
 
 | # | Document | What you get |
 |---|---|---|
 | 1 | [The addon model](01-addon-model.md) | Services, not plugins. The file contract, ports, `root_path` |
-| 2 | [Lifecycle & registry](02-lifecycle-and-registry.md) | The CLI, `install.sh`, `config/addons.json`, how `shared/` is delivered |
+| 2 | [Lifecycle & registry](02-lifecycle-and-registry.md) | The CLI, `install.ps1`, the task, `config\addons.json`, how `shared/` is delivered |
 | 3 | [rom-manager](03-rom-manager.md) | Every route and function |
 | 4 | [rpcs3-manager](04-rpcs3-manager.md) | Every route and function, and why `ryaml` exists |
 | 5 | [save-manager](05-save-manager.md) | The catalog, the memory-card codec, save identity, the archive format |
@@ -47,9 +48,9 @@ flowchart TB
 
     cli["gamecore-addon CLI<br/>(ships with the core)"]
     cli -->|writes| reg
-    cli -->|runs install.sh| a1 & a2 & a3 & a4
+    cli -->|runs install.ps1| a1 & a2 & a3 & a4
 
-    subgraph addons["one process each, systemd --user"]
+    subgraph addons["one process each, a scheduled task at logon"]
         a1["rom-manager :8770<br/>/roms"]
         a2["rpcs3-manager :8771<br/>/rpcs3"]
         a3["save-manager :8772<br/>/saves"]
@@ -65,11 +66,11 @@ flowchart TB
 
 Three properties fall out of that shape and are worth stating plainly:
 
-1. **An addon crash cannot take the TV down.** Separate process, separate
-   unit, `Restart=on-failure`.
+1. **An addon crash cannot take the TV down.** Separate process, its own
+   scheduled task, restarted by `addon-run.py`.
 2. **Addons are buildless.** Plain static `web/`, no bundler, no compile step.
-   The checkout *is* what runs — you can edit an addon's HTML on the box and
-   reload the page.
+   The checkout *is* what runs — you can edit an addon's HTML in
+   `<DATA>\addons\_repo` and reload the page (until the next update replaces it).
 3. **Addons contain no authentication code.** Caddy enforces it upstream and
    passes `X-GC-User`. See [6](06-security-and-traps.md).
 

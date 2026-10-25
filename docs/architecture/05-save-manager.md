@@ -30,9 +30,7 @@ flowchart LR
 `catalog.py` is the map. One entry per emulator:
 
 ```python
-"gopher64": {"label": "Nintendo 64", "bases": [
-    HOME / ".var/app/io.github.gopher64.gopher64/data/gopher64",
-    HOME / ".local/share/gopher64"], "collections": [
+"gopher64": {"label": "Nintendo 64", "bases": [APPDATA / "gopher64"], "collections": [
     C("saves",  "files", "save",  [".eep", ".mpk", ".sra", ".fla", ".srm"], "n64"),
     C("states", "files", "state", (), "n64"),
 ]},
@@ -43,13 +41,17 @@ sits under the base, whether entries are files or directories, whether they are
 saves or states, which extensions count, and **which resolver** gives them an
 identity.
 
-`bases` is a **list** because the same emulator may be installed as Flatpak or
-native — and both directories may exist with only one of them in use:
+`bases` is a **list** because an emulator's user folder has moved between
+versions (Dolphin: Documents, then `%APPDATA%` since 2024; DuckStation:
+Documents, then `%LOCALAPPDATA%`), and a portable install keeps it by its exe.
+The folders come from `windows_dirs` (shared): `%APPDATA%`, `%LOCALAPPDATA%`,
+and Documents as the shell reports it (OneDrive can move it).
 
 | Function | Role |
 |---|---|
 | `resolve_base(emu_id)` | picks the right base when several candidates exist |
-| `_declared_flatpak(emu_id)` | what the box's `systems.json` says the install is |
+| `PORTABLE` / `portable_bases(emu_id)` | the folder a portable install keeps by the exe `systems.json` declares (a marker file such as `portable.txt` where the emulator needs one). RPCS3 and Xenia have no other base |
+| `bases(emu_id)` | portable candidates first, then the catalog's; ties go to the first |
 | `_base_savecount(emu_id, base)` | cheap count of entries a base would yield — the tie-breaker |
 | `_load_local_bases()` | merges machine-specific overrides from an optional `local_bases.json` (gitignored) |
 
@@ -249,11 +251,11 @@ share a name (`EDEN_ERA`).
 before touching it.
 
 Uploads spool to a `SpooledTemporaryFile` past 64 MiB — a full RPCS3 backup
-must never sit in the box's RAM.
+must never sit in memory.
 
 ## PC-side tooling
 
 `guide.py` holds the per-emulator "transfer your saves from a PC" instructions
 rendered in the UI, verified against each emulator's own source and docs.
-`tools/gamecore-save-export.py` (550 l.) is the standalone counterpart that
+`tools/gamecore-save-export.py` is the standalone counterpart that
 runs on the PC and pushes to the box; it is served at `/tools`.

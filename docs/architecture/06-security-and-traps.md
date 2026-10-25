@@ -53,7 +53,7 @@ dest.write_bytes(zf.read(member))
 ```
 
 Step 1 is not redundant with step 3. Step 3 alone would still let a member
-escape through a symlink already on disk, and step 1 alone misses paths that
+escape through a symlink or junction already on disk, and step 1 alone misses paths that
 resolve outside without containing `..`. `upload_full()` in
 `save-manager/server.py` is the reference implementation — copy it rather than
 reinventing.
@@ -94,17 +94,33 @@ work. If you add a row to the addon table, the directory has to exist.
 Editing `addons/save-manager/sfo.py` changes nothing upstream and is
 overwritten on the next update. Edit `shared/py/sfo.py`.
 
-**Ports live in two places.**
-`addon.json` and the `PORT=` line in `install.sh`. Nothing checks that they
-agree.
+**The port lives in `addon.json` only.**
+`install.ps1` reads it from there; `tests/test_manifests.py` checks ports and
+paths are distinct and in 8770-8799. A new `path` needs its route in the core's
+`install/system/Caddyfile`.
 
-**`install.sh` must be idempotent.**
+**`install.ps1` must be idempotent.**
 `gamecore-addon update` re-runs it on every update. Anything that only works
 on a clean box is a bug.
 
 **The checkout is the deployment.**
 No build step. A syntax error in `web/index.html` ships instantly, and local
-edits on the box are lost at the next `git pull`.
+edits in `<DATA>\addons\_repo` are lost at the next `gamecore-addon update`,
+which replaces the folder wholesale.
+
+**A profile's swapped save folder is a junction.**
+The core links it with a directory junction (a symlink needs admin on
+Windows), and `Path.is_symlink()` is False for one. Use
+`profiles.is_link()`, or the swap guard looks straight through it.
+
+**NTFS refuses names Linux took.**
+`: * ? " < > |`, control characters, `CON`/`NUL`/`COM1`… and trailing dots
+or spaces. rom-manager's `safe_filename` replaces only those, so a ROM keeps
+the name its saves are keyed by.
+
+**Files are rewritten in LF.**
+`Path.write_text` translates `\n` to CRLF on Windows: pass `newline="\n"`
+when rewriting an emulator's own file (rpcs3-manager's `write_text`).
 
 **RPCS3 YAML is not YAML.**
 `On`/`Off` become booleans and `1.10` becomes a float under stock PyYAML,
